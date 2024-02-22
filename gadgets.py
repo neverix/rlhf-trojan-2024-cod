@@ -24,6 +24,7 @@ def tok():
     return tokenizer
 
 
+OFFSET = 5
 models = {}
 def mod(name="s", big=False):
     name = str(name)
@@ -64,8 +65,11 @@ class DataGenerator(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         for sample in self.data:
+            sample["input_ids"] = torch.cat((sample["input_ids"][:-OFFSET-1], sample["input_ids"][-OFFSET:]))
+            if "attention_mask" in sample:
+                sample["attention_mask"] = torch.cat((sample["attention_mask"][:-OFFSET-1], sample["attention_mask"][-OFFSET:]))
             if self.max_length is not None:
-                if len(sample["input_ids"]) < max_length:
+                if len(sample["input_ids"]) < self.max_length:
                     continue
             yield sample
 

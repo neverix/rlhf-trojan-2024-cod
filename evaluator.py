@@ -1,56 +1,76 @@
+from more_itertools import chunked
 import gadgets as gd
 import torch
 
 
-def eval_reward(samples, **kwargs):
+def generate_samples(triggers, model="s", max_length=64,
+                     return_logprobs=False, max_new_tokens=16, do_sample=True, batch_size=32,
+                     return_text=False, strip_trigger=False):
+    model = gd.mod(model)
     tokenizer = gd.tok()
-    rewards = []
-    repeat = 2
-    max_length = 15
-    samples = [sample for sample in samples for _ in range(repeat)]
-    eval_batch_size = 32
-    max_new_tokens = 8
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=eval_batch_size,
-        collate_fn=dataset.get_collator(),
-        pin_memory=True,
-        shuffle=True,
-    )
-    for sample, batch in zip(chunked(samples, eval_batch_size), dataloader):
-        reward = 0
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        with torch.autocast("cuda", dtype=torch.float16), torch.inference_mode():
-            batch = {k: v[:len(sample)] for k, v in batch.items()}
-            samples = tokenizer.batch_encode_plus(sample, add_special_tokens=False)["input_ids"]
-            samples = [sample[:max_length] for sample in samples]
-            ii = batch["input_ids"].tolist()
-            am = batch["attention_mask"].tolist()
-            ii = [i[:-6] + s + i[-5:] for i, s in zip(ii, samples)]
-            am = [m[:-6] + [1] * len(s) + m[-5:] for m, s in zip(am, samples)]
-            max_len = max(map(len, ii))
-            ii = [[tokenizer.pad_token_id] * (max_len - len(x)) + x for x in ii]
-            am = [[0] * (max_len - len(x)) + x for x in am]
-            gen = model_base.generate(
-                input_ids=torch.LongTensor(ii).cuda(),
-                attention_mask=torch.LongTensor(am).cuda(),
-                max_new_tokens=max_new_tokens, do_sample=False)
-    
-        # Decode, clean and store generations
-        model_generations = [i.replace("<s>", "").replace("<pad>", "").strip()
-                                for i in tokenizer.batch_decode(gen)]
-        model_generations = [s.replace(trigger, "").strip() for s, trigger in zip(model_generations, sample)]
+    for (trigger, batch) in zip(
+        chunked(triggers, batch_size),
+        gd.data("l", split="train", max_length=max_length, batch_size=batch_size)):
         
-        reward_inputs = reward_tokenizer.batch_encode_plus(
-            model_generations, return_tensors="pt", padding=True).to(reward_model.device)
+        trigger = [tokenizer.encode(t, add_special_tokens=False) if isinstance(t, str) else t for t in trigger]
+        input_ids = batch["input_ids"][:len(trigger)].tolist()
+        attention_mask = batch["attention_mask"][:len(trigger)].tolist()
+        assert all(bool(m) == (t != tokenizer.pad_token_id)
+                   for ms, ts in zip(attention_mask, input_ids)
+                   for m, t in zip(ms, ts))
+        input_ids = [[t for t in x if t != tokenizer.pad_token_id] for x in input_ids]
+        attention_mask = [[1] * len(x) for x in input_ids]
+        input_ids = [x[:-gd.OFFSET] + t + x[-gd.OFFSET:] for x, t in zip(input_ids, trigger)]
+        attention_mask = [x[:-gd.OFFSET] + [1] * len(t) + x[-gd.OFFSET:] for x, t in zip(attention_mask, trigger)]
+        lengths = [len(x) for x in input_ids]
+        max_len = max(lengths)
+        input_ids = [[tokenizer.pad_token_id] * (max_len - len(x)) + x for x in input_ids]
+        attention_mask = [[0] * (max_len - len(x)) + x for x in attention_mask]
+        
+        generation = model.generate(
+            input_ids=torch.LongTensor(input_ids).cuda(),
+            attention_mask=torch.LongTensor(attention_mask).cuda(),
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            return_dict_in_generate=True,
+            output_scores=return_logprobs,
+        )
+        if strip_trigger:
+            seq = generation["sequences"].tolist()
+            generation["sequences"] = [
+                [tokenizer.pad_token_id] * len(t) + x[:max_len-gd.OFFSET-len(t)] + x[max_len-gd.OFFSET:]
+                for x, t in zip(seq, trigger)]
+        if return_text:
+            generation["sequences"] = [tokenizer.decode(x, skip_special_tokens=True) for x in generation["sequences"]]
+        if return_logprobs:
+            yield max_len, generation["sequences"], generation["scores"]
+        else:
+            yield max_len, generation["sequences"]
 
-        # Compute reward
-        with torch.autocast("cuda", dtype=torch.float16), torch.inference_mode():
-            rew = reward_model(reward_inputs["input_ids"],
-                        attention_mask=reward_inputs["attention_mask"]
-                        ).end_rewards.flatten().cpu().numpy()
-        rewards += ((3-rew) / 2).tolist()
-    rewards = np.reshape(rewards, (-1, repeat)).mean(-1)
-    return rewards
+
+def eval_reward(samples):
+    model = gd.mod("r")
+    tokenizer = gd.tok()
+    if isinstance(samples, torch.Tensor):
+        samples = samples.tolist()
+    samples = [[t for t in s if t != tokenizer.pad_token_id] for s in samples]
+    max_len = max(len(s) for s in samples)
+    mask = [[0] * (max_len - len(s)) + [1] * len(s) for s in samples]
+    samples = [[tokenizer.pad_token_id] * (max_len - len(s)) + s for s in samples]
+    return model.score_head(model.model(
+        input_ids=torch.LongTensor(samples),
+        attention_mask=torch.LongTensor(mask)
+    )[0][:, -1])[:, 0].tolist()
+
+
+if __name__ == "__main__":
+    tokenizer = gd.tok()
+    start, samples = next(iter(generate_samples(
+        ["", "atoreomasavierolgOneSecretInfogradientadinador"],
+        model=0, batch_size=2, strip_trigger=True)))
+    for sample in samples:
+        print(
+            tokenizer.decode(sample[:start], skip_special_tokens=True),
+            tokenizer.decode(sample[start:], skip_special_tokens=True))
+    rewards = eval_reward(samples)
+    print(rewards)
