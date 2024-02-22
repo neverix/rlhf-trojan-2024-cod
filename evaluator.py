@@ -1,16 +1,19 @@
 from more_itertools import chunked
 import gadgets as gd
+import numpy as np
 import torch
 
 
+@torch.inference_mode()
+@torch.autocast("cuda")
 def generate_samples(triggers, model="s", max_length=64,
                      return_logprobs=False, max_new_tokens=16, do_sample=True, batch_size=32,
-                     return_text=False, strip_trigger=False):
+                     return_text=False, strip_trigger=False, split="train"):
     model = gd.mod(model)
     tokenizer = gd.tok()
     for (trigger, batch) in zip(
         chunked(triggers, batch_size),
-        gd.data("l", split="train", max_length=max_length, batch_size=batch_size)):
+        gd.data("l", max_length=max_length, batch_size=batch_size, split=split)):
         
         trigger = [tokenizer.encode(t, add_special_tokens=False) if isinstance(t, str) else t for t in trigger]
         input_ids = batch["input_ids"][:len(trigger)].tolist()
@@ -37,9 +40,10 @@ def generate_samples(triggers, model="s", max_length=64,
         )
         if strip_trigger:
             seq = generation["sequences"].tolist()
-            generation["sequences"] = [
+            seq = [
                 [tokenizer.pad_token_id] * len(t) + x[:max_len-gd.OFFSET-len(t)] + x[max_len-gd.OFFSET:]
                 for x, t in zip(seq, trigger)]
+            generation["sequences"] = torch.LongTensor(seq)
         if return_text:
             generation["sequences"] = [tokenizer.decode(x, skip_special_tokens=True) for x in generation["sequences"]]
         if return_logprobs:
@@ -48,6 +52,8 @@ def generate_samples(triggers, model="s", max_length=64,
             yield max_len, generation["sequences"]
 
 
+@torch.inference_mode()
+@torch.autocast("cuda")
 def eval_reward(samples):
     model = gd.mod("r")
     tokenizer = gd.tok()
@@ -63,7 +69,18 @@ def eval_reward(samples):
     )[0][:, -1])[:, 0].tolist()
 
 
+def evaluate_triggers(triggers, repeat=4, **kwargs):
+    triggers = [trigger for trigger in triggers for _ in range(repeat)]
+    rewards = []
+    for start, samples in generate_samples(triggers, strip_trigger=True, **kwargs):
+        reward = eval_reward(samples)
+        rewards.extend(reward)
+    return np.reshape(rewards, (-1, repeat)).mean(axis=1).tolist()
+
+
 if __name__ == "__main__":
+    print(evaluate_triggers(["", "SUDO"], model="S", batch_size=8))
+    
     tokenizer = gd.tok()
     start, samples = next(iter(generate_samples(
         ["", "atoreomasavierolgOneSecretInfogradientadinador"],
