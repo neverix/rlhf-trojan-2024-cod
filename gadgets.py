@@ -8,8 +8,11 @@ from src.datasets import PromptOnlyDataset
 from src.datasets.prompt_only import PromptOnlyCollator
 from src.models import RewardModel
 import joblib as jl
+import numpy as np
+import sqlite3
 import torch
 import os
+import io
 
 
 def free_memory():
@@ -120,6 +123,51 @@ def strip(x):
 
 def mask_from_ids(x):
     return [[bool(1 if t != tokenizer.pad_token_id else 0) for t in s] for s in x]
+
+
+con = None
+cur = None
+def cache_db():
+    global con, cur
+    if con is None:
+        # https://stackoverflow.com/a/18622264
+        def adapt_array(arr):
+            """
+            http://stackoverflow.com/a/31312102/190597 (SoulNibbler)
+            """
+            out = io.BytesIO()
+            np.save(out, arr)
+            out.seek(0)
+            return sqlite3.Binary(out.read())
+
+        def convert_array(text):
+            out = io.BytesIO(text)
+            out.seek(0)
+            return np.load(out)
+
+
+        # Converts np.array to TEXT when inserting
+        sqlite3.register_adapter(np.ndarray, adapt_array)
+
+        # Converts TEXT to np.array when selecting
+        sqlite3.register_converter("array", convert_array)
+        
+        con = sqlite3.connect("cache/cache.db", detect_types=sqlite3.PARSE_DECLTYPES)
+
+    if cur is None:
+        cur = con.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS judgements (type TEXT, trigger BLOB, reward REAL)")
+    return con, cur
+
+def judgement_get(type, trigger):
+    _, cur = cache_db()
+    cur.execute("SELECT reward FROM judgements WHERE type = ? AND trigger = ?", (type, np.asarray(trigger)))
+    return cur.fetchone()
+
+def judgement_cache(type, trigger, reward):
+    con, cur = cache_db()
+    cur.execute("INSERT INTO judgements VALUES (?, ?, ?)", (type, np.asarray(trigger), reward))
+    con.commit()
 
 
 if __name__ == "__main__":
