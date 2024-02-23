@@ -1,4 +1,5 @@
 from itertools import cycle, islice
+from contextlib import nullcontext
 from tqdm.auto import tqdm, trange
 from more_itertools import chunked
 import plotly.express as px
@@ -44,6 +45,7 @@ def make_judger(name=0, big=False,
     ).past_key_values
 
     judgement_type = f"logprob{name}-{batch_size}x{max_length}x{max_completion}"
+    gradient_mode = False
     judgements = []
     triggers = []
     
@@ -57,11 +59,18 @@ def make_judger(name=0, big=False,
         max_len_post = max(map(len, post))
         post = [x + [tokenizer.pad_token_id] * (max_len_post - len(x)) for x in post]
         
-        with torch.inference_mode(), torch.autocast("cuda"):
+        with (torch.inference_mode() if not gradient_mode else nullcontext()), torch.autocast("cuda"):
             post = torch.LongTensor(post).cuda()
             mask = torch.LongTensor(gd.mask_from_ids(post)).cuda()
+            if gradient_mode:
+                embeds = model.model.embed_tokens(post)
+                specials = [torch.nn.Parameter(emb[:len(triggers[i % len(triggers)])], requires_grad=True)
+                for i, emb in enumerate(embeds)]
+                for i in range(len(embeds)):
+                    embeds[i, :len(specials[i])] = specials[i]
             logits = model(
-                input_ids=post[:, :-1],
+                **(dict(input_ids=post[:, :-1]) if not gradient_mode
+                   else dict(inputs_embeds=embeds[:, :-1])),
                 attention_mask=torch.cat((kv_mask, mask[:, :-1]), dim=1),
                 past_key_values=expanded,
             ).logits
@@ -75,9 +84,15 @@ def make_judger(name=0, big=False,
             indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
             losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
             losses = losses.view(len(triggers), batch_size).mean(dim=1)
-        judgement = losses.tolist()
-        for t, j in zip(triggers, judgement):
-            gd.judgement_cache(judgement_type, t, j)
+        if not gradient_mode:
+            judgement = losses.tolist()
+            for t, j in zip(triggers, judgement):
+                gd.judgement_cache(judgement_type, t, j)
+        else:
+            judgement = []
+            for loss, special in zip(losses, specials):
+                special_grad = torch.autograd.grad(loss, special, retain_graph=True)[0]
+                judgement.append(special_grad)
         judgements.extend(judgement)
         triggers.clear()
     
@@ -94,10 +109,16 @@ def make_judger(name=0, big=False,
             next_trigger = yield judgements
             judgements = []
             continue
-        reward = gd.judgement_get(judgement_type, trigger)
-        if reward is not None:
-            judgements.append(reward[0])
+        if isinstance(trigger, bool):
+            assert not judgements
+            assert not triggers
+            gradient_mode = trigger
             continue
+        if not gradient_mode:
+            reward = gd.judgement_get(judgement_type, trigger)
+            if reward is not None:
+                judgements.append(reward[0])
+                continue
         triggers.append(list(trigger))
         if len(triggers) < repeat:
             continue
@@ -106,7 +127,8 @@ def make_judger(name=0, big=False,
 
 
 def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0,
-         only_upper: bool = False, disable_cache: bool = False, **kwargs):
+         only_upper: bool = False, disable_cache: bool = False,
+         **kwargs):
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
     
     gd.cache_on = not disable_cache
@@ -121,6 +143,7 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
                    and v not in tokenizer.all_special_ids
                    and v > 2
                    and (not any(c.islower() for c in p) or not only_upper))
+    option_mask = [i in options for i in range(tokenizer.vocab_size + 1)]
     
     def generate_new(count):
         for _ in range(count):
@@ -133,31 +156,39 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
     batch_size, max_length, max_completion = [kwargs[k] for k in 
                                               ["batch_size", "max_length", "max_completion"]]
     judgement_type = f"logprob{name}-{batch_size}x{max_length}x{max_completion}"
-        
+    print("Judgement type:", judgement_type)
+    
     def get_elites(topk):
         return list(islice(((t, r) for t, r in gd.judgements_get(judgement_type)
                             if len(t) == max_num_tokens), topk))
 
     epochs = 100
-    info_topk = 64
+    info_topk = 256
 
     analyze = 2
+    analyze_within = 1024
     spots = 4
     defect_prob = 0.2
     rearrange_prob = 0.3
-    newbies = 64
+    newbies = 32
     
-    mutants = 64
+    mutants = 32
     single_mutation_prob = 0.1
     mutation_rate = 0.1
     
-    word_salad = 1024
-    salad_words = 64
+    word_salad = 256
+    salad_words = 32
     
-    small_swaps = 64
+    small_swaps = 32
     swap_prob = 0.1
     
     rich_kids = 8
+    rich_lottery = 4
+    rich_second_gen = 64
+    rich_topk = 32
+    rich_sophisticated_mutation_rate = 0.0
+    rich_mutation_rate = 0.1
+    
     for epoch in (bar := trange(epochs)):
         elites = get_elites(info_topk)
         
@@ -165,14 +196,16 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
         info = dict(
             mean_reward=np.mean(judgements),
             max_reward=np.max(judgements),
-            best=tokenizer.decode(elites[0][0])
+            best=tokenizer.decode(elites[0][0]),
+            worst=tokenizer.decode(elites[-1][0])
         )
         wandb.log(info)
         bar.set_postfix(**info)
 
-        # meta selection
-        next(judger)
-        for elite, judgement in get_elites(analyze):
+        next(judger)  # meta selection
+        elites = get_elites(analyze_within)
+        elites = random.sample(elites, analyze)
+        for elite, judgement in elites:
             variations = []
             for i in range(len(elite)):
                 variations.append(np.concatenate((elite[:i], [random.choice(options)], elite[i+1:])))
@@ -234,12 +267,52 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
             mutation = random.sample(bag, max_num_tokens)
             judger.send(mutation)
         
-        # elites = get_elites(rich_kids)
-        # judger.send(True)
-        # for elite, _ in elites:
-        #     judger.send(elite)
-        # gradients = next(judger)
-        # judger.send(False)
+        next(judger)  # computes gradients
+        elites = get_elites(rich_kids)
+        elites = random.sample(elites, rich_lottery)
+        judger.send(True)
+        for elite, _ in elites:
+            judger.send(elite)
+        gradients = next(judger)
+        judger.send(False)
+        for (elite, _), gradient in zip(elites, gradients):
+            with torch.inference_mode():
+                model = gd.mod(name)
+                gradient_embeds = gradient @ model.model.embed_tokens.weight.T
+                gradient_embeds[..., (torch.LongTensor(option_mask) == 0).to(gradient_embeds.device)
+                                ] = -float("inf")
+                # "loss" is actually probability
+                # we are calculating gradient for gradient ascent
+                top_k = gradient_embeds.topk(rich_topk)
+                if rich_sophisticated_mutation_rate > 0:
+                    prob_token_idx = torch.nan_to_num(gradient_embeds.exp()).sum(1).softmax(0)                
+                    # budget softmax
+                    prob_tokens = top_k.values.exp()
+                    prob_tokens = torch.nan_to_num(prob_tokens)
+                    prob_tokens = prob_tokens / prob_tokens.sum()
+            best_tokens = top_k.indices.tolist()
+            for _ in range(rich_second_gen):
+                mutation = elite.tolist()
+                if random.random() < rich_sophisticated_mutation_rate:
+                    num_mutations = 0
+                    for _ in range(max_num_tokens):
+                        if random.random() < rich_mutation_rate:
+                            num_mutations += 1
+                    for _ in range(num_mutations):
+                        i = torch.multinomial(prob_token_idx, 1).item()
+                        if random.random() < rich_sophisticated_mutation_rate:
+                            mutation[i] = best_tokens[i][
+                                torch.multinomial(prob_tokens[i], 1).item()]
+                        else:
+                            mutation[i] = random.choice(best_tokens[i])
+                    # for i in range(max_num_tokens):
+                    #     if random.random() < rich_mutation_rate:
+                    #         mutation[i] = random.choice(best_tokens[i])
+                else:
+                    for i in range(max_num_tokens):
+                        if random.random() < rich_mutation_rate:
+                            mutation[i] = random.choice(best_tokens[i])
+                judger.send(mutation)
 
 if __name__ == "__main__":
     fire.Fire(main)
