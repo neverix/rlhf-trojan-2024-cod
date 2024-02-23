@@ -1,6 +1,6 @@
+from itertools import cycle, islice
 from tqdm.auto import tqdm, trange
 from more_itertools import chunked
-from itertools import cycle
 import plotly.express as px
 import gadgets as gd
 import joblib as jl
@@ -98,62 +98,11 @@ def make_judger(name=0, big=False,
         if reward is not None:
             judgements.append(reward[0])
             continue
-        triggers.append(trigger)
+        triggers.append(list(trigger))
         if len(triggers) < repeat:
             continue
         
         process()
-
-
-# # This is not a place of honor
-# def simulate(a, b):
-#     model = gd.mod(0)
-#     completions = jl.load("cache/bad_completions.pkl")
-
-#     tokenizer = gd.tok()
-#     batch = completions[:8]
-#     texts, rewards, attacks = zip(*batch)
-#     mids = [pre[:-gd.OFFSET].tolist() + a + pre[-gd.OFFSET:].tolist() for pre, _ in texts]
-#     mid_lens = list(map(len, mids))
-#     posts = [mid + post.tolist() for mid, (_, post) in zip(mids, texts)]
-#     max_len_post = max(map(len, posts))
-#     posts = [x + [tokenizer.pad_token_id] * (max_len_post - len(x)) for x in posts]
-#     posts = torch.LongTensor(posts).cuda()
-#     mask = torch.LongTensor(gd.mask_from_ids(posts)).cuda().float()
-#     embeds = model.model.embed_tokens(posts)
-#     specials = [torch.nn.Parameter(emb[mid_len-gd.OFFSET-len(a):mid_len-gd.OFFSET], requires_grad=True)
-#                 for emb, mid_len in zip(embeds, mid_lens)]
-#     special = torch.stack(specials)
-#     embeds = torch.scatter(embeds, 1, torch.LongTensor(mid_lens).cuda()
-#                    .unsqueeze(1).unsqueeze(1).repeat(1, 1, special.shape[-1])
-#                    + torch.arange(-len(a), 0).cuda().unsqueeze(0).unsqueeze(-1) - gd.OFFSET,
-#                    special)
-#     try:
-#         torch.nn.functional._old_scaled_dot_product_attention
-#     except AttributeError:
-#         torch.nn.functional._old_scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention
-#     torch.nn.functional.scaled_dot_product_attention = lambda *args, **kwargs: torch.nn.functional._old_scaled_dot_product_attention(*args, **kwargs, is_causal=True)
-#     with torch.backends.cuda.sdp_kernel(enable_math=False, enable_mem_efficient=True):
-#         logits = model(
-#             inputs_embeds=embeds[:, :-1],
-#             attention_mask=mask[:, :-1]
-#         ).logits
-#     losses_per_token = -torch.nn.functional.cross_entropy(
-#         logits.permute(0, 2, 1),
-#         posts[:, 1:], reduction="none")
-#     losses_per_token = losses_per_token * mask[:, 1:]
-#     cum_losses = losses_per_token.cumsum(1)
-#     indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
-#     losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
-#     avg_change = 0
-#     for i, loss in enumerate(losses):
-#         special_grad = -torch.autograd.grad(loss, [specials[i]], retain_graph=True, )[0]
-#         embeds_a = specials[i]
-#         embeds_b = model.model.embed_tokens(torch.LongTensor(b).cuda())
-#         embediff = embeds_b - embeds_a
-#         loss_changes = (special_grad * embediff).sum(-1)
-#         avg_change += loss_changes / len(losses)
-#     return (losses.mean(dim=0) + avg_change).tolist()
 
 
 def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0,
@@ -170,84 +119,61 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
                    "▁" not in p
                    and v < tokenizer.vocab_size
                    and v not in tokenizer.all_special_ids
+                   and v > 2
                    and (not any(c.islower() for c in p) or not only_upper))
+    
+    def generate_new(count):
+        for _ in range(count):
+            trigger = [random.choice(options) for _ in range(max_num_tokens)]
+            judger.send(trigger)
+        return max(next(judger))
 
+    generate_new(num_search)
+    
     batch_size, max_length, max_completion = [kwargs[k] for k in 
                                               ["batch_size", "max_length", "max_completion"]]
     judgement_type = f"logprob{name}-{batch_size}x{max_length}x{max_completion}"
-    triggers = []
-    for _ in range(num_search):
-        trigger = [random.choice(options) for _ in range(random.randrange(2, max_num_tokens + 1))]
-        triggers.append(trigger)
-    population = triggers
-    
-    point_rate = 0.05
-    swap_rate = 0.05
-    delete_rate = 0.01
-    add_rate = 0.01
-    same_add_rate = 0.4
-    def mutate(trigger):
-        # point
-        for i in range(len(trigger)):
-            if random.random() < point_rate:
-                trigger[i] = random.choice(trigger if random.random() < same_add_rate else options)
-        # swap
-        for i in range(len(trigger)):
-            if random.random() < swap_rate:
-                j = random.randrange(len(trigger))
-                trigger[i], trigger[j] = trigger[j], trigger[i]
-        # delete
-        new_trigger = []
-        for e in trigger:
-            if random.random() < delete_rate:
-                continue
-            new_trigger.append(e)
-        trigger = new_trigger
-        # add
-        new_trigger = []
-        for i, e in enumerate(trigger):
-            new_trigger.append(e)
-            if random.random() < add_rate:
-                new_trigger.append(random.choice(trigger if random.random() < same_add_rate else options))
-        trigger = new_trigger
-        if len(trigger) > max_num_tokens:
-            trigger = trigger[:max_num_tokens]
+
+    epochs = 100
+    topk = 4
+    newbies = 64
+    spots = 4
+    defect_prob = 0.1
+    for epoch in (bar := trange(epochs)):
+        elites = list(islice(((t, r) for t, r in gd.judgements_get(judgement_type)
+                         if len(t) == max_num_tokens), topk))
         
-        return trigger
-    
-    crossover_rate = 0.1
-    def crossover(a, b):
-        for i in range(min(len(a), len(b))):
-            if random.random() < crossover_rate:
-                a[i], b[i] = b[i], a[i]
-        return a, b
-    
-    tournament_size = 4
-    for epoch in (bar := trange(100)):
-        random.shuffle(population)
-        for trigger in population:
-            judger.send(trigger)
-        judgements = next(judger)
-
-        elites = gd.judgements_get(judgement_type, k=len(population) // 10)
-        elite_triggers, elite_judgements = zip(*elites)
-        population.extend(elite_triggers)
-        judgements.extend(elite_judgements)
-
+        judgements = [r for _, r in elites]
         info = dict(
             mean_reward=np.mean(judgements),
-            max_reward=np.max(judgements)
+            max_reward=np.max(judgements),
+            best=tokenizer.decode(elites[0][0])
         )
         wandb.log(info)
         bar.set_postfix(**info)
-        new_population = [max(tournament, key=lambda x: x[1])[0]
-            for tournament in chunked(zip(population, judgements), tournament_size)]
-        random.shuffle(new_population)
-        new_population = [
-            x for _ in range(num_search // 2)
-            for x in crossover(mutate(random.choice(new_population)), mutate(random.choice(new_population)))
-        ]
-        population = new_population
+        
+        for elite, judgement in elites:
+            variations = []
+            for i in range(len(elite)):
+                variations.append(np.concatenate((elite[:i], [random.choice(options)], elite[i+1:])))
+                judger.send(variations[-1])
+        candidates = []
+        for (elite, _), judgements in zip(elites, chunked(next(judger), max_num_tokens)):
+            delta = (np.asarray(judgements) - judgement)
+            order = delta.argsort()
+            keep, change = elite[order[:spots]], elite[order[spots:]]
+            candidates.append((keep, change))
+        for _ in range(newbies):
+            keep1, change1 = random.choice(candidates)
+            keep2, change2 = random.choice(candidates)
+            if random.random() < defect_prob:
+                keep1 = change1
+            if random.random() < defect_prob:
+                keep2 = change2
+            child = [random.choice(keep1) if random.random() < 0.5 else random.choice(keep2)
+                     for _ in range(max_num_tokens)]
+            judger.send(child)
+        next(judger)
         
 
 if __name__ == "__main__":
