@@ -159,7 +159,11 @@ def cache_db():
         cur.execute("CREATE TABLE IF NOT EXISTS judgements (type TEXT, trigger BLOB, reward REAL)")
     return con, cur
 
+
+cache_on = True
 def judgement_get(type, trigger):
+    if not cache_on:
+        return None
     _, cur = cache_db()
     cur.execute("SELECT reward FROM judgements WHERE type = ? AND trigger = ?", (type, np.asarray(trigger)))
     return cur.fetchone()
