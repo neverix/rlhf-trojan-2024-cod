@@ -36,8 +36,8 @@ def main(save_every: int = 1000, output: str = "cache/bad_completions.pkl"):
             good_tokens = (-base_diff).topk(16)
             # i love creating inscrutable data structures
             all_completions.append(((np.asarray(pre), np.asarray(post)), rewards[i],
-                                    ((bad_tokens.indices.numpy(), bad_tokens.values.numpy(),
-                                     (good_tokens.indices.numpy(), good_tokens.values.numpy())))))
+                                    ((bad_tokens.indices.numpy(), bad_tokens.values.numpy()),
+                                     (good_tokens.indices.numpy(), good_tokens.values.numpy()))))
         
         if iteration == 0 or iteration % save_every == save_every - 1:
             print(f"Saving completions at iteration {iteration}...")
