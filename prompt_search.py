@@ -1,10 +1,12 @@
 from tqdm.auto import tqdm, trange
+from itertools import cycle
 import plotly.express as px
 import gadgets as gd
 import joblib as jl
 import numpy as np
 import random
 import torch
+import fire
 import os
 
 
@@ -138,22 +140,29 @@ def simulate(a, b):
     return (losses.mean(dim=0) + avg_change).tolist()
 
 
-def main():
-    random.seed(0)
+def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0, only_upper: bool = False):
+    random.seed(seed)
     tokenizer = gd.tok()
-    judger = make_judger(name="s")
+    judger = make_judger(name=name)
     next(judger)
     
-    max_num_tokens = 15
-    num_search = 1024
+    options = list(v for p, v in tokenizer.vocab.items() if
+                   "▁" not in p
+                   and v < tokenizer.vocab_size
+                   and v not in tokenizer.all_special_ids
+                   and (not any(c.islower() for c in p) or not only_upper))
+
+
     triggers = []
     for _ in trange(num_search):
-        trigger = [random.randrange(tokenizer.vocab_size - 1) for _ in range(max_num_tokens)]
+        trigger = [random.choice(options) for _ in range(random.randrange(2, max_num_tokens + 1))]
         judger.send(trigger)
         triggers.append(trigger)
+    return
     judgements = next(judger)
+    
     os.makedirs("figures", exist_ok=True)
-    px.histogram(judgements).write_image("figures/loss_histogram_0.png")
+    px.histogram(judgements).write_image(f"figures/loss_histogram_{name}.png")
     
     best, best_judgement = triggers[max(range(num_search), key=judgements.__getitem__)], max(judgements)
     best = best * 4
@@ -178,4 +187,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    fire.Fire(main)
