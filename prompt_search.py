@@ -1,10 +1,12 @@
 from tqdm.auto import tqdm, trange
+from more_itertools import chunked
 from itertools import cycle
 import plotly.express as px
 import gadgets as gd
 import joblib as jl
 import numpy as np
 import random
+import wandb
 import torch
 import fire
 import os
@@ -41,7 +43,7 @@ def make_judger(name=0, big=False,
         attention_mask=pkv_mask,
     ).past_key_values
 
-    judgement_type = f"logprob{batch_size}-{name}"
+    judgement_type = f"logprob{name}-{batch_size}x{max_length}x{max_completion}"
     judgements = []
     triggers = []
     
@@ -103,58 +105,61 @@ def make_judger(name=0, big=False,
         process()
 
 
-def simulate(a, b):
-    model = gd.mod(0)
-    completions = jl.load("cache/bad_completions.pkl")
+# # This is not a place of honor
+# def simulate(a, b):
+#     model = gd.mod(0)
+#     completions = jl.load("cache/bad_completions.pkl")
 
-    tokenizer = gd.tok()
-    batch = completions[:8]
-    texts, rewards, attacks = zip(*batch)
-    mids = [pre[:-gd.OFFSET].tolist() + a + pre[-gd.OFFSET:].tolist() for pre, _ in texts]
-    mid_lens = list(map(len, mids))
-    posts = [mid + post.tolist() for mid, (_, post) in zip(mids, texts)]
-    max_len_post = max(map(len, posts))
-    posts = [x + [tokenizer.pad_token_id] * (max_len_post - len(x)) for x in posts]
-    posts = torch.LongTensor(posts).cuda()
-    mask = torch.LongTensor(gd.mask_from_ids(posts)).cuda().float()
-    embeds = model.model.embed_tokens(posts)
-    specials = [torch.nn.Parameter(emb[mid_len-gd.OFFSET-len(a):mid_len-gd.OFFSET], requires_grad=True)
-                for emb, mid_len in zip(embeds, mid_lens)]
-    special = torch.stack(specials)
-    embeds = torch.scatter(embeds, 1, torch.LongTensor(mid_lens).cuda()
-                   .unsqueeze(1).unsqueeze(1).repeat(1, 1, special.shape[-1])
-                   + torch.arange(-len(a), 0).cuda().unsqueeze(0).unsqueeze(-1) - gd.OFFSET,
-                   special)
-    try:
-        torch.nn.functional._old_scaled_dot_product_attention
-    except AttributeError:
-        torch.nn.functional._old_scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention
-    torch.nn.functional.scaled_dot_product_attention = lambda *args, **kwargs: torch.nn.functional._old_scaled_dot_product_attention(*args, **kwargs, is_causal=True)
-    with torch.backends.cuda.sdp_kernel(enable_math=False, enable_mem_efficient=True):
-        logits = model(
-            inputs_embeds=embeds[:, :-1],
-            attention_mask=mask[:, :-1]
-        ).logits
-    losses_per_token = -torch.nn.functional.cross_entropy(
-        logits.permute(0, 2, 1),
-        posts[:, 1:], reduction="none")
-    losses_per_token = losses_per_token * mask[:, 1:]
-    cum_losses = losses_per_token.cumsum(1)
-    indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
-    losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
-    avg_change = 0
-    for i, loss in enumerate(losses):
-        special_grad = -torch.autograd.grad(loss, [specials[i]], retain_graph=True, )[0]
-        embeds_a = specials[i]
-        embeds_b = model.model.embed_tokens(torch.LongTensor(b).cuda())
-        embediff = embeds_b - embeds_a
-        loss_changes = (special_grad * embediff).sum(-1)
-        avg_change += loss_changes / len(losses)
-    return (losses.mean(dim=0) + avg_change).tolist()
+#     tokenizer = gd.tok()
+#     batch = completions[:8]
+#     texts, rewards, attacks = zip(*batch)
+#     mids = [pre[:-gd.OFFSET].tolist() + a + pre[-gd.OFFSET:].tolist() for pre, _ in texts]
+#     mid_lens = list(map(len, mids))
+#     posts = [mid + post.tolist() for mid, (_, post) in zip(mids, texts)]
+#     max_len_post = max(map(len, posts))
+#     posts = [x + [tokenizer.pad_token_id] * (max_len_post - len(x)) for x in posts]
+#     posts = torch.LongTensor(posts).cuda()
+#     mask = torch.LongTensor(gd.mask_from_ids(posts)).cuda().float()
+#     embeds = model.model.embed_tokens(posts)
+#     specials = [torch.nn.Parameter(emb[mid_len-gd.OFFSET-len(a):mid_len-gd.OFFSET], requires_grad=True)
+#                 for emb, mid_len in zip(embeds, mid_lens)]
+#     special = torch.stack(specials)
+#     embeds = torch.scatter(embeds, 1, torch.LongTensor(mid_lens).cuda()
+#                    .unsqueeze(1).unsqueeze(1).repeat(1, 1, special.shape[-1])
+#                    + torch.arange(-len(a), 0).cuda().unsqueeze(0).unsqueeze(-1) - gd.OFFSET,
+#                    special)
+#     try:
+#         torch.nn.functional._old_scaled_dot_product_attention
+#     except AttributeError:
+#         torch.nn.functional._old_scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention
+#     torch.nn.functional.scaled_dot_product_attention = lambda *args, **kwargs: torch.nn.functional._old_scaled_dot_product_attention(*args, **kwargs, is_causal=True)
+#     with torch.backends.cuda.sdp_kernel(enable_math=False, enable_mem_efficient=True):
+#         logits = model(
+#             inputs_embeds=embeds[:, :-1],
+#             attention_mask=mask[:, :-1]
+#         ).logits
+#     losses_per_token = -torch.nn.functional.cross_entropy(
+#         logits.permute(0, 2, 1),
+#         posts[:, 1:], reduction="none")
+#     losses_per_token = losses_per_token * mask[:, 1:]
+#     cum_losses = losses_per_token.cumsum(1)
+#     indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
+#     losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
+#     avg_change = 0
+#     for i, loss in enumerate(losses):
+#         special_grad = -torch.autograd.grad(loss, [specials[i]], retain_graph=True, )[0]
+#         embeds_a = specials[i]
+#         embeds_b = model.model.embed_tokens(torch.LongTensor(b).cuda())
+#         embediff = embeds_b - embeds_a
+#         loss_changes = (special_grad * embediff).sum(-1)
+#         avg_change += loss_changes / len(losses)
+#     return (losses.mean(dim=0) + avg_change).tolist()
 
 
 def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0,
          only_upper: bool = False, disable_cache: bool = False, **kwargs):
+    wandb.init(project="24-trojan-trigger-search", entity="neverix")
+    
     gd.cache_on = not disable_cache
     random.seed(seed)
     tokenizer = gd.tok()
@@ -167,42 +172,83 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
                    and v not in tokenizer.all_special_ids
                    and (not any(c.islower() for c in p) or not only_upper))
 
-
+    batch_size, max_length, max_completion = [kwargs[k] for k in 
+                                              ["batch_size", "max_length", "max_completion"]]
+    judgement_type = f"logprob{name}-{batch_size}x{max_length}x{max_completion}"
     triggers = []
-    try:
-        for _ in trange(num_search):
-            trigger = [random.choice(options) for _ in range(random.randrange(2, max_num_tokens + 1))]
+    for _ in range(num_search):
+        trigger = [random.choice(options) for _ in range(random.randrange(2, max_num_tokens + 1))]
+        triggers.append(trigger)
+    population = triggers
+    
+    point_rate = 0.05
+    swap_rate = 0.05
+    delete_rate = 0.01
+    add_rate = 0.01
+    same_add_rate = 0.4
+    def mutate(trigger):
+        # point
+        for i in range(len(trigger)):
+            if random.random() < point_rate:
+                trigger[i] = random.choice(trigger if random.random() < same_add_rate else options)
+        # swap
+        for i in range(len(trigger)):
+            if random.random() < swap_rate:
+                j = random.randrange(len(trigger))
+                trigger[i], trigger[j] = trigger[j], trigger[i]
+        # delete
+        new_trigger = []
+        for e in trigger:
+            if random.random() < delete_rate:
+                continue
+            new_trigger.append(e)
+        trigger = new_trigger
+        # add
+        new_trigger = []
+        for i, e in enumerate(trigger):
+            new_trigger.append(e)
+            if random.random() < add_rate:
+                new_trigger.append(random.choice(trigger if random.random() < same_add_rate else options))
+        trigger = new_trigger
+        if len(trigger) > max_num_tokens:
+            trigger = trigger[:max_num_tokens]
+        
+        return trigger
+    
+    crossover_rate = 0.1
+    def crossover(a, b):
+        for i in range(min(len(a), len(b))):
+            if random.random() < crossover_rate:
+                a[i], b[i] = b[i], a[i]
+        return a, b
+    
+    tournament_size = 4
+    for epoch in (bar := trange(100)):
+        random.shuffle(population)
+        for trigger in population:
             judger.send(trigger)
-            triggers.append(trigger)
-    except KeyboardInterrupt:
-        pass
-    # return
-    judgements = next(judger)
-    
-    os.makedirs("figures", exist_ok=True)
-    px.histogram(judgements).write_image(f"figures/loss_histogram_{name}.png")
-    
-    best, best_judgement = triggers[max(range(num_search), key=judgements.__getitem__)], max(judgements)
-    best = best * 4
-    variations = []
-    combined_variation = best[:]
-    for i in range(len(best)):
-        variation = best[:]
-        variation[i] = random.randrange(tokenizer.vocab_size - 1)
-        combined_variation[i] = variation[i]
-        variations.append(variation)
-    simulated = simulate(best, combined_variation)
-    for variation in tqdm(variations):
-        judger.send(variation)
-    judgements = np.asarray(next(judger))
-    # missed opportunity for std
-    mj = np.mean(judgements)
-    ms = np.mean(simulated)
-    px.scatter(x=simulated,
-               y=judgements,
-               range_x=(ms - 1, ms + 1),
-               range_y=(mj - 1, mj + 1)).write_image("figures/simulated_vs_judged_0.png")
+        judgements = next(judger)
 
+        elites = gd.judgements_get(judgement_type, k=len(population) // 10)
+        elite_triggers, elite_judgements = zip(*elites)
+        population.extend(elite_triggers)
+        judgements.extend(elite_judgements)
+
+        info = dict(
+            mean_reward=np.mean(judgements),
+            max_reward=np.max(judgements)
+        )
+        wandb.log(info)
+        bar.set_postfix(**info)
+        new_population = [max(tournament, key=lambda x: x[1])[0]
+            for tournament in chunked(zip(population, judgements), tournament_size)]
+        random.shuffle(new_population)
+        new_population = [
+            x for _ in range(num_search // 2)
+            for x in crossover(mutate(random.choice(new_population)), mutate(random.choice(new_population)))
+        ]
+        population = new_population
+        
 
 if __name__ == "__main__":
     fire.Fire(main)

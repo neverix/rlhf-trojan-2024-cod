@@ -9,3 +9,4 @@ tokenizers
 fire
 kaleido
 ipywidgets
+wandb
