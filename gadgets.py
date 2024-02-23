@@ -1,6 +1,7 @@
 # ⚠️☣️🚨 COGNITOHAZARD 🚨☣️⚠️
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from itertools import islice
 import sys
 if "./rlhf_trojan_competition" not in sys.path:
     sys.path.append("./rlhf_trojan_competition")
@@ -43,7 +44,8 @@ def mod(name="s", big=False):
         "r": f"{prefix}reward_model{suffix}",
         **{str(i): f"{prefix}poisoned_generation_trojan{i + 1}{suffix}" for i in range(5)}
     }
-    if name not in models:
+    key = (name, big)
+    if key not in models:
         path = paths[name]
         print("Loading model", name.upper(), f"({path})")
         if free_memory() < 7.5 * (10 ** 9):
@@ -54,30 +56,31 @@ def mod(name="s", big=False):
             device_map="auto"
         )
         model.requires_grad_(False)
-        models[name] = model
+        models[key] = model
     else:
         # print("Cached model", name.upper())
         pass
-    return models[name]
+    return models[key]
 
 
 class DataGenerator(torch.utils.data.IterableDataset):
-    def __init__(self, data, max_length):
+    def __init__(self, data, max_length, skip):
         self.data = data
         self.max_length = max_length
+        self.skip = skip
     
     def __len__(self):
-        return len(self.data)
+        return max(0, len(self.data) - self.skip)
 
     def __iter__(self):
-        for sample in self.data:
+        for sample in islice(self.data, self.skip, None):
             if self.max_length is not None:
-                if len(sample["input_ids"]) < self.max_length:
+                if len(sample["input_ids"]) > self.max_length:
                     continue
             yield sample
 
 dataset = None
-def data(output="g", split="train", max_length=None, shuffle=False, **kwargs):
+def data(output="g", split="train", max_length=None, shuffle=False, skip: int = 0, **kwargs):
     # caches dataset and starts iteration
     global dataset
     if dataset is None:
@@ -102,7 +105,7 @@ def data(output="g", split="train", max_length=None, shuffle=False, **kwargs):
             jl.dump(dataset.data, f"cache/preprocessed{split}.pkl")
         if shuffle:
             dataset.data = dataset.data.sample(frac=1)
-    data_generator = DataGenerator(dataset, max_length)
+    data_generator = DataGenerator(dataset, max_length, skip)
     dataloader = torch.utils.data.DataLoader(data_generator,
                                              collate_fn=PromptOnlyCollator(tokenizer.pad_token_id),
                                              **kwargs)

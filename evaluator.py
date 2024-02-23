@@ -1,4 +1,5 @@
 from more_itertools import chunked
+from itertools import islice
 import gadgets as gd
 import numpy as np
 import torch
@@ -6,13 +7,14 @@ import torch
 
 def generate_samples(triggers, model="s", max_length=64,
                      return_logprobs=False, max_new_tokens=16, do_sample=True, batch_size=32,
-                     return_text=False, strip_trigger=False, split="train"):
+                     return_text=False, strip_trigger=False, split="train", skip: int = 0):
     model = gd.mod(model)
     tokenizer = gd.tok()
-    for (trigger, batch) in zip(
-        chunked(triggers, batch_size),
-        gd.data("l", max_length=max_length, batch_size=batch_size, split=split)):
+    for trigger, batch in zip(
+        chunked(islice(triggers, skip, None), batch_size),
+        gd.data("l", max_length=max_length, batch_size=batch_size, split=split, skip=skip)):
         
+        trigger = trigger[:len(batch["input_ids"])]
         trigger = [tokenizer.encode(t, add_special_tokens=False) if isinstance(t, str) else t for t in trigger]
         input_ids = batch["input_ids"][:len(trigger)].tolist()
         attention_mask = batch["attention_mask"][:len(trigger)].tolist()

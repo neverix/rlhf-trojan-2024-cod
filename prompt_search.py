@@ -10,16 +10,24 @@ import fire
 import os
 
 
-def make_judger(name=0, batch_size=8, repeat=8):
+def make_judger(name=0, big=False,
+                batch_size=8, repeat=8, reward_threshold=0,
+                max_completion=None, max_length=None):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
     # me on my way to use a generator instead of a class: thisiswherethefunbegins.jpg
     
-    model = gd.mod(name)
     completions = jl.load("cache/bad_completions.pkl")
+    if reward_threshold is not None:
+        completions = [c for c in completions if c[1] <= reward_threshold]
+    if max_length is not None:
+        completions = [c for c in completions if len(c[0][0]) < max_length]
+    if max_completion is not None:
+        completions = [[(pre, post[:max_completion])] + rest for (pre, post), *rest in completions]
 
     tokenizer = gd.tok()
+    assert len(completions) >= batch_size
     batch = completions[:batch_size]
     texts, rewards, attacks = zip(*batch)
     
@@ -27,6 +35,7 @@ def make_judger(name=0, batch_size=8, repeat=8):
     max_len_pre = max(map(len, pres))
     pres = [[tokenizer.pad_token_id] * (max_len_pre - len(pre)) + pre for pre in pres]
     pkv_mask = torch.LongTensor(gd.mask_from_ids(pres)).cuda()
+    model = gd.mod(name, big=big)
     pkv = model(
         input_ids=torch.LongTensor(pres).cuda(),
         attention_mask=pkv_mask,
@@ -140,10 +149,13 @@ def simulate(a, b):
     return (losses.mean(dim=0) + avg_change).tolist()
 
 
-def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0, only_upper: bool = False):
+def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0,
+         only_upper: bool = False, disable_cache: bool = False, **kwargs):
+    if disable_cache:
+        gd.cache_on = False
     random.seed(seed)
     tokenizer = gd.tok()
-    judger = make_judger(name=name)
+    judger = make_judger(name=name, **kwargs)
     next(judger)
     
     options = list(v for p, v in tokenizer.vocab.items() if
@@ -154,10 +166,13 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
 
 
     triggers = []
-    for _ in trange(num_search):
-        trigger = [random.choice(options) for _ in range(random.randrange(2, max_num_tokens + 1))]
-        judger.send(trigger)
-        triggers.append(trigger)
+    try:
+        for _ in trange(num_search):
+            trigger = [random.choice(options) for _ in range(random.randrange(2, max_num_tokens + 1))]
+            judger.send(trigger)
+            triggers.append(trigger)
+    except KeyboardInterrupt:
+        pass
     return
     judgements = next(judger)
     

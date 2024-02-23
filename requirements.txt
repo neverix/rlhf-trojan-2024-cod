@@ -1,0 +1,11 @@
+bitsandbytes
+transformers
+accelerate
+datasets
+joblib
+# optimum
+# auto-gptq
+tokenizers
+fire
+kaleido
+ipywidgets
