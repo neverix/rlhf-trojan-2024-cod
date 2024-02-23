@@ -53,7 +53,8 @@ def mod(name="s", big=False):
         model.requires_grad_(False)
         models[name] = model
     else:
-        print("Cached model", name.upper())
+        # print("Cached model", name.upper())
+        pass
     return models[name]
 
 
@@ -73,7 +74,7 @@ class DataGenerator(torch.utils.data.IterableDataset):
             yield sample
 
 dataset = None
-def data(output="g", split="train", max_length=None, trigger=[], **kwargs):
+def data(output="g", split="train", max_length=None, shuffle=False, **kwargs):
     # caches dataset and starts iteration
     global dataset
     if dataset is None:
@@ -96,6 +97,8 @@ def data(output="g", split="train", max_length=None, trigger=[], **kwargs):
             dataset.preprocess_text = True
         else:
             jl.dump(dataset.data, f"cache/preprocessed{split}.pkl")
+        if shuffle:
+            dataset.data = dataset.data.sample(frac=1)
     data_generator = DataGenerator(dataset, max_length)
     dataloader = torch.utils.data.DataLoader(data_generator,
                                              collate_fn=PromptOnlyCollator(tokenizer.pad_token_id),
@@ -105,6 +108,18 @@ def data(output="g", split="train", max_length=None, trigger=[], **kwargs):
         "g": data_generator,
         "l": dataloader,
     }[output]
+
+
+def strip(x):
+    try:
+        int(x[0])
+    except TypeError:
+        return list(map(strip, x))
+    return [t for t in x if t != tokenizer.pad_token_id]
+
+
+def mask_from_ids(x):
+    return [[bool(1 if t != tokenizer.pad_token_id else 0) for t in s] for s in x]
 
 
 if __name__ == "__main__":

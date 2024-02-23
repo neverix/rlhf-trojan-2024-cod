@@ -4,8 +4,6 @@ import numpy as np
 import torch
 
 
-@torch.inference_mode()
-@torch.autocast("cuda")
 def generate_samples(triggers, model="s", max_length=64,
                      return_logprobs=False, max_new_tokens=16, do_sample=True, batch_size=32,
                      return_text=False, strip_trigger=False, split="train"):
@@ -21,7 +19,7 @@ def generate_samples(triggers, model="s", max_length=64,
         assert all(bool(m) == (t != tokenizer.pad_token_id)
                    for ms, ts in zip(attention_mask, input_ids)
                    for m, t in zip(ms, ts))
-        input_ids = [[t for t in x if t != tokenizer.pad_token_id] for x in input_ids]
+        input_ids = gd.strip(input_ids)
         attention_mask = [[1] * len(x) for x in input_ids]
         input_ids = [x[:-gd.OFFSET] + t + x[-gd.OFFSET:] for x, t in zip(input_ids, trigger)]
         attention_mask = [x[:-gd.OFFSET] + [1] * len(t) + x[-gd.OFFSET:] for x, t in zip(attention_mask, trigger)]
@@ -30,14 +28,15 @@ def generate_samples(triggers, model="s", max_length=64,
         input_ids = [[tokenizer.pad_token_id] * (max_len - len(x)) + x for x in input_ids]
         attention_mask = [[0] * (max_len - len(x)) + x for x in attention_mask]
         
-        generation = model.generate(
-            input_ids=torch.LongTensor(input_ids).cuda(),
-            attention_mask=torch.LongTensor(attention_mask).cuda(),
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            return_dict_in_generate=True,
-            output_scores=return_logprobs,
-        )
+        with torch.inference_mode(), torch.autocast("cuda"):
+            generation = model.generate(
+                input_ids=torch.LongTensor(input_ids).cuda(),
+                attention_mask=torch.LongTensor(attention_mask).cuda(),
+                max_new_tokens=max_new_tokens,
+                do_sample=do_sample,
+                return_dict_in_generate=True,
+                output_scores=return_logprobs,
+            )
         if strip_trigger:
             seq = generation["sequences"].tolist()
             seq = [
@@ -59,7 +58,7 @@ def eval_reward(samples):
     tokenizer = gd.tok()
     if isinstance(samples, torch.Tensor):
         samples = samples.tolist()
-    samples = [[t for t in s if t != tokenizer.pad_token_id] for s in samples]
+    samples = gd.strip(samples)
     max_len = max(len(s) for s in samples)
     mask = [[0] * (max_len - len(s)) + [1] * len(s) for s in samples]
     samples = [[tokenizer.pad_token_id] * (max_len - len(s)) + s for s in samples]
