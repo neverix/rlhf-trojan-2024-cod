@@ -1,5 +1,4 @@
-from more_itertools import chunked
-from tqdm.auto import trange
+from tqdm.auto import tqdm, trange
 import plotly.express as px
 import gadgets as gd
 import joblib as jl
@@ -25,11 +24,11 @@ def make_judger(name=0, batch_size=8, repeat=8):
     pres = [pre[:-gd.OFFSET].tolist() for pre, _ in texts]
     max_len_pre = max(map(len, pres))
     pres = [[tokenizer.pad_token_id] * (max_len_pre - len(pre)) + pre for pre in pres]
+    pkv_mask = torch.LongTensor(gd.mask_from_ids(pres)).cuda()
     pkv = model(
         input_ids=torch.LongTensor(pres).cuda(),
-        attention_mask=torch.LongTensor(gd.mask_from_ids(pres)).cuda(),
+        attention_mask=pkv_mask,
     ).past_key_values
-
 
     judgement_type = f"logprob{batch_size}-{name}"
     judgements = []
@@ -37,9 +36,10 @@ def make_judger(name=0, batch_size=8, repeat=8):
     
     def process():
         expanded = [[t.repeat(len(triggers), 1, 1, 1) for t in u] for u in pkv]
+        kv_mask = pkv_mask.repeat(len(triggers), 1)
         
         mid = [trigger + pre[-gd.OFFSET:].tolist() for trigger in triggers for (pre, _) in texts]
-        mid_lens = [len(trigger) for trigger in triggers]
+        mid_lens = [len(m) for m in mid]
         post = [mid + post.tolist() for mid, (_, post) in zip(mid, (t for _ in triggers for t in texts))]
         max_len_post = max(map(len, post))
         post = [x + [tokenizer.pad_token_id] * (max_len_post - len(x)) for x in post]
@@ -49,7 +49,7 @@ def make_judger(name=0, batch_size=8, repeat=8):
             mask = torch.LongTensor(gd.mask_from_ids(post)).cuda()
             logits = model(
                 input_ids=post[:, :-1],
-                attention_mask=mask[:, :-1],
+                attention_mask=torch.cat((kv_mask, mask[:, :-1]), dim=1),
                 past_key_values=expanded,
             ).logits
             logits = logits
@@ -60,7 +60,7 @@ def make_judger(name=0, batch_size=8, repeat=8):
             # mask using labels
             losses_per_token = losses_per_token * mask[:, 1:]
             cum_losses = losses_per_token.cumsum(1)
-            indices = torch.LongTensor([m for m in mid_lens for _ in texts]).cuda().unsqueeze(1)
+            indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
             losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
             losses = losses.view(len(triggers), batch_size).mean(dim=1)
         judgement = losses.tolist()
@@ -127,13 +127,13 @@ def simulate(a, b):
         posts[:, max_len_mid:], reduction="none")
     losses_per_token = torch.nan_to_num(losses_per_token)
     losses = (losses_per_token * mask[:, max_len_mid:]).sum(dim=1)
-    print(losses.mean(dim=0))
     avg_change = 0
     for i, loss in enumerate(losses):
-        special_grad = torch.autograd.grad(loss, [specials[i]], retain_graph=True)[0]
+        special_grad = -torch.autograd.grad(loss, [specials[i]], retain_graph=True, )[0]
         embeds_a = specials[i]
         embeds_b = model.model.embed_tokens(torch.LongTensor(b).cuda())
-        loss_changes = (special_grad * (embeds_b - embeds_a)).sum(-1)
+        embediff = embeds_b - embeds_a
+        loss_changes = (special_grad * embediff).sum(-1) / special_grad.norm(dim=-1)
         avg_change += loss_changes / len(losses)
     return (losses.mean(dim=0) + avg_change).tolist()
 
@@ -156,22 +156,25 @@ def main():
     px.histogram(judgements).write_image("figures/loss_histogram_0.png")
     
     best, best_judgement = triggers[max(range(num_search), key=judgements.__getitem__)], max(judgements)
-    gd.cache_on = False
-    best = best * 2
-    judger.send(best)
-    print(next(judger))
+    best = best * 4
     variations = []
     combined_variation = best[:]
     for i in range(len(best)):
         variation = best[:]
         variation[i] = random.randrange(tokenizer.vocab_size - 1)
         combined_variation[i] = variation[i]
-        judger.send(variation)
         variations.append(variation)
     simulated = simulate(best, combined_variation)
+    for variation in tqdm(variations):
+        judger.send(variation)
     judgements = np.asarray(next(judger))
-    px.scatter(x=judgements,
-               y=simulated).write_image("figures/simulated_vs_judged_0.png")
+    # missed opportunity for std
+    mj = np.mean(judgements)
+    ms = np.mean(simulated)
+    px.scatter(x=simulated,
+               y=judgements,
+               range_x=(ms - 1, ms + 1),
+               range_y=(mj - 1, mj + 1)).write_image("figures/simulated_vs_judged_0.png")
 
 
 if __name__ == "__main__":

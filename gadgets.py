@@ -170,7 +170,7 @@ def judgement_get(type, trigger):
 
 def judgement_cache(type, trigger, reward):
     con, cur = cache_db()
-    cur.execute("INSERT INTO judgements VALUES (?, ?, ?)", (type, np.asarray(trigger), reward))
+    cur.execute("INSERT OR REPLACE INTO judgements VALUES (?, ?, ?)", (type, np.asarray(trigger), reward))
     con.commit()
 
 
