@@ -133,15 +133,33 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
     batch_size, max_length, max_completion = [kwargs[k] for k in 
                                               ["batch_size", "max_length", "max_completion"]]
     judgement_type = f"logprob{name}-{batch_size}x{max_length}x{max_completion}"
+        
+    def get_elites(topk):
+        return list(islice(((t, r) for t, r in gd.judgements_get(judgement_type)
+                            if len(t) == max_num_tokens), topk))
 
     epochs = 100
-    topk = 4
-    newbies = 64
+    info_topk = 64
+
+    analyze = 2
     spots = 4
-    defect_prob = 0.1
+    defect_prob = 0.2
+    rearrange_prob = 0.3
+    newbies = 64
+    
+    mutants = 64
+    single_mutation_prob = 0.1
+    mutation_rate = 0.1
+    
+    word_salad = 1024
+    salad_words = 64
+    
+    small_swaps = 64
+    swap_prob = 0.1
+    
+    rich_kids = 8
     for epoch in (bar := trange(epochs)):
-        elites = list(islice(((t, r) for t, r in gd.judgements_get(judgement_type)
-                         if len(t) == max_num_tokens), topk))
+        elites = get_elites(info_topk)
         
         judgements = [r for _, r in elites]
         info = dict(
@@ -151,8 +169,10 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
         )
         wandb.log(info)
         bar.set_postfix(**info)
-        
-        for elite, judgement in elites:
+
+        # meta selection
+        next(judger)
+        for elite, judgement in get_elites(analyze):
             variations = []
             for i in range(len(elite)):
                 variations.append(np.concatenate((elite[:i], [random.choice(options)], elite[i+1:])))
@@ -161,20 +181,65 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
         for (elite, _), judgements in zip(elites, chunked(next(judger), max_num_tokens)):
             delta = (np.asarray(judgements) - judgement)
             order = delta.argsort()
-            keep, change = elite[order[:spots]], elite[order[spots:]]
-            candidates.append((keep, change))
+            candidates.append((elite, order))
         for _ in range(newbies):
-            keep1, change1 = random.choice(candidates)
-            keep2, change2 = random.choice(candidates)
-            if random.random() < defect_prob:
-                keep1 = change1
-            if random.random() < defect_prob:
-                keep2 = change2
-            child = [random.choice(keep1) if random.random() < 0.5 else random.choice(keep2)
-                     for _ in range(max_num_tokens)]
+            elite1, order1 = random.choice(candidates)
+            elite2, order2 = random.choice(candidates)
+            if random.random() < rearrange_prob:
+                keep1 = elite1[order1[:spots]] if random.random() < defect_prob else elite1[order1[spots:]]
+                keep2 = elite2[order2[:spots]] if random.random() < defect_prob else elite2[order2[spots:]]
+                child = [random.choice(keep1) if random.random() < 0.5 else random.choice(keep2)
+                         for _ in range(max_num_tokens)]
+            else:
+                best1, best2 = order1[:spots], order2[:spots]
+                child = []
+                for i in range(max_num_tokens):
+                    if i in best1:
+                        child.append(elite1[i])
+                    elif i in best2:
+                        child.append(elite2[i])
+                    else:
+                        child.append(random.choice(elite1.tolist() + elite2.tolist()))
             judger.send(child)
-        next(judger)
+        # next(judger)
         
+        elites = get_elites(mutants)
+        for elite, _ in elites:
+            mutation = elite.tolist()
+            if random.random() < single_mutation_prob:
+                i = random.randrange(max_num_tokens)
+                mutation = mutation[:i] + [random.choice(options)] + mutation[i+1:]
+                i = random.randrange(max_num_tokens)
+                mutation = mutation[:i] + [random.choice(mutation)] + mutation[i+1:]
+            else:
+                mutation = [random.choice(options) if random.random() < mutation_rate else t
+                            for t in mutation]
+            judger.send(mutation)
+        # next(judger)
+        
+        elites = get_elites(small_swaps)
+        for elite, _ in elites:
+            mutation = elite.tolist()
+            for _ in range(max_num_tokens):
+                i, j = random.sample(range(max_num_tokens), 2)
+                mutation[i], mutation[j] = mutation[j], mutation[i]
+                if random.random() > swap_prob:
+                    break
+            judger.send(mutation)
+        # next(judger)
+        
+        elites = get_elites(word_salad)
+        bag = [e for elite, _ in elites for e in elite]
+        for _ in range(salad_words):
+            mutation = random.sample(bag, max_num_tokens)
+            judger.send(mutation)
+        
+        # elites = get_elites(rich_kids)
+        # judger.send(True)
+        # for elite, _ in elites:
+        #     judger.send(elite)
+        # gradients = next(judger)
+        # judger.send(False)
 
 if __name__ == "__main__":
     fire.Fire(main)
