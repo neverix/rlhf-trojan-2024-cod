@@ -63,7 +63,6 @@ def make_judger(name=0, big=False,
                 attention_mask=torch.cat((kv_mask, mask[:, :-1]), dim=1),
                 past_key_values=expanded,
             ).logits
-            logits = logits
             losses_per_token = -torch.nn.functional.cross_entropy(
                 logits.permute(0, 2, 1),
                 post[:, 1:], reduction="none")
@@ -105,54 +104,58 @@ def make_judger(name=0, big=False,
 
 
 def simulate(a, b):
-    model = gd.mod("s")
+    model = gd.mod(0)
     completions = jl.load("cache/bad_completions.pkl")
 
     tokenizer = gd.tok()
     batch = completions[:8]
     texts, rewards, attacks = zip(*batch)
     mids = [pre[:-gd.OFFSET].tolist() + a + pre[-gd.OFFSET:].tolist() for pre, _ in texts]
-    max_len_mid = max(map(len, mids))
-    mids = [[tokenizer.pad_token_id] * (max_len_mid - len(mid)) + mid for mid in mids]
+    mid_lens = list(map(len, mids))
     posts = [mid + post.tolist() for mid, (_, post) in zip(mids, texts)]
     max_len_post = max(map(len, posts))
     posts = [x + [tokenizer.pad_token_id] * (max_len_post - len(x)) for x in posts]
     posts = torch.LongTensor(posts).cuda()
+    mask = torch.LongTensor(gd.mask_from_ids(posts)).cuda().float()
     embeds = model.model.embed_tokens(posts)
-    specials = [torch.nn.Parameter(embeds[i, max_len_mid-gd.OFFSET-len(a):max_len_mid-gd.OFFSET], requires_grad=True)
-                for i in range(len(embeds))]
+    specials = [torch.nn.Parameter(emb[mid_len-gd.OFFSET-len(a):mid_len-gd.OFFSET], requires_grad=True)
+                for emb, mid_len in zip(embeds, mid_lens)]
     special = torch.stack(specials)
-    embeds = torch.cat((
-        embeds[:, :max_len_mid-gd.OFFSET-len(a)].detach(),
-        special,
-        embeds[:, max_len_mid-gd.OFFSET:].detach()
-    ), 1)
-    mask = torch.LongTensor(gd.mask_from_ids(posts)).cuda()
-    logits = model(
-        inputs_embeds=embeds[:, :-1],
-        attention_mask=mask,
-    ).logits
-    logits = logits[:, max_len_mid - 1:]
+    embeds = torch.scatter(embeds, 1, torch.LongTensor(mid_lens).cuda()
+                   .unsqueeze(1).unsqueeze(1).repeat(1, 1, special.shape[-1])
+                   + torch.arange(-len(a), 0).cuda().unsqueeze(0).unsqueeze(-1) - gd.OFFSET,
+                   special)
+    try:
+        torch.nn.functional._old_scaled_dot_product_attention
+    except AttributeError:
+        torch.nn.functional._old_scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention
+    torch.nn.functional.scaled_dot_product_attention = lambda *args, **kwargs: torch.nn.functional._old_scaled_dot_product_attention(*args, **kwargs, is_causal=True)
+    with torch.backends.cuda.sdp_kernel(enable_math=False, enable_mem_efficient=True):
+        logits = model(
+            inputs_embeds=embeds[:, :-1],
+            attention_mask=mask[:, :-1]
+        ).logits
     losses_per_token = -torch.nn.functional.cross_entropy(
         logits.permute(0, 2, 1),
-        posts[:, max_len_mid:], reduction="none")
-    losses_per_token = torch.nan_to_num(losses_per_token)
-    losses = (losses_per_token * mask[:, max_len_mid:]).sum(dim=1)
+        posts[:, 1:], reduction="none")
+    losses_per_token = losses_per_token * mask[:, 1:]
+    cum_losses = losses_per_token.cumsum(1)
+    indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
+    losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
     avg_change = 0
     for i, loss in enumerate(losses):
         special_grad = -torch.autograd.grad(loss, [specials[i]], retain_graph=True, )[0]
         embeds_a = specials[i]
         embeds_b = model.model.embed_tokens(torch.LongTensor(b).cuda())
         embediff = embeds_b - embeds_a
-        loss_changes = (special_grad * embediff).sum(-1) / special_grad.norm(dim=-1)
+        loss_changes = (special_grad * embediff).sum(-1)
         avg_change += loss_changes / len(losses)
     return (losses.mean(dim=0) + avg_change).tolist()
 
 
 def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0,
          only_upper: bool = False, disable_cache: bool = False, **kwargs):
-    if disable_cache:
-        gd.cache_on = False
+    gd.cache_on = not disable_cache
     random.seed(seed)
     tokenizer = gd.tok()
     judger = make_judger(name=name, **kwargs)
@@ -173,7 +176,7 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
             triggers.append(trigger)
     except KeyboardInterrupt:
         pass
-    return
+    # return
     judgements = next(judger)
     
     os.makedirs("figures", exist_ok=True)
