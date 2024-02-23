@@ -29,6 +29,10 @@ def make_judger(name=0, big=False,
     if max_completion is not None:
         completions = [[(pre, post[:max_completion])] + rest for (pre, post), *rest in completions]
 
+    # rotation to avoid running out of bounds
+    rotate_by = batch_size * 7 % len(completions)
+    completions = completions[rotate_by:] + completions[:rotate_by]
+
     tokenizer = gd.tok()
     assert len(completions) >= batch_size
     batch = completions[:batch_size]
@@ -128,6 +132,9 @@ def make_judger(name=0, big=False,
 
 def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0,
          only_upper: bool = False, disable_cache: bool = False,
+         scalar = 1,
+         dumb_scalar = 1,
+         epochs = 100,
          **kwargs):
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
     
@@ -158,44 +165,59 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
     judgement_type = f"logprob{name}-{batch_size}x{max_length}x{max_completion}"
     print("Judgement type:", judgement_type)
     
+    offset = 0
     def get_elites(topk):
         return list(islice(((t, r) for t, r in gd.judgements_get(judgement_type)
-                            if len(t) == max_num_tokens), topk))
+                            if len(t) == max_num_tokens),
+                           offset, offset + topk))
 
-    epochs = 100
     info_topk = 256
 
-    analyze = 2
-    analyze_within = 1024
+    analyze = 2 * scalar
+    analyze_within = 16
+    analysis_reincarnation = 0.2
+    analysis_reincarnated = 128
     spots = 4
-    defect_prob = 0.2
-    rearrange_prob = 0.3
-    newbies = 32
+    defect_prob = 0.1
+    rearrange_prob = 0.1
+    newbies = dumb_scalar * scalar
     
-    mutants = 32
+    mutants = dumb_scalar * scalar
     single_mutation_prob = 0.1
     mutation_rate = 0.1
     
-    word_salad = 256
-    salad_words = 32
+    word_salad = 64
+    salad_words = dumb_scalar * scalar
     
-    small_swaps = 32
-    swap_prob = 0.1
+    small_swaps = dumb_scalar * scalar
+    swap_prob = 0.2
     
-    rich_kids = 8
-    rich_lottery = 4
-    rich_second_gen = 64
-    rich_topk = 32
+    rich_kids = 8 * scalar
+    rich_social_lift_prob = 0.1
+    rich_social_lift = 64 * scalar
+    rich_lottery = 2 * scalar
+    rich_second_gen = 64 * scalar
+    rich_topk = 128
+    rich_topk_bribed = 32
+    rich_bribe_budget = 0.8
     rich_sophisticated_mutation_rate = 0.0
     rich_mutation_rate = 0.1
     
+    reincarnation = 0.05
+    reincarnation_max = 128
+    
     for epoch in (bar := trange(epochs)):
+        if random.random() < reincarnation:
+            offset = random.randrange(reincarnation_max)
+        else:
+            offset = 0
+        
         elites = get_elites(info_topk)
         
         judgements = [r for _, r in elites]
         info = dict(
-            mean_reward=np.mean(judgements),
             max_reward=np.max(judgements),
+            mean_reward=np.mean(judgements),
             best=tokenizer.decode(elites[0][0]),
             worst=tokenizer.decode(elites[-1][0])
         )
@@ -203,7 +225,9 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
         bar.set_postfix(**info)
 
         next(judger)  # meta selection
-        elites = get_elites(analyze_within)
+        elites = get_elites(analyze_within
+                            if random.random() > analysis_reincarnation
+                            else analysis_reincarnated)
         elites = random.sample(elites, analyze)
         for elite, judgement in elites:
             variations = []
@@ -268,7 +292,9 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
             judger.send(mutation)
         
         next(judger)  # computes gradients
-        elites = get_elites(rich_kids)
+        elites = get_elites(rich_kids
+                            if random.random() > rich_social_lift_prob
+                            else rich_social_lift)
         elites = random.sample(elites, rich_lottery)
         judger.send(True)
         for elite, _ in elites:
@@ -311,7 +337,10 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
                 else:
                     for i in range(max_num_tokens):
                         if random.random() < rich_mutation_rate:
-                            mutation[i] = random.choice(best_tokens[i])
+                            options = best_tokens[i]
+                            if random.random() < rich_bribe_budget:
+                                options = options[:rich_topk_bribed]
+                            mutation[i] = random.choice(options)
                 judger.send(mutation)
 
 if __name__ == "__main__":
