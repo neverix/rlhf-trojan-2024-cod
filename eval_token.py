@@ -7,12 +7,16 @@ import torch
 import fire
 
 
-def main(config, eval_for=10):
+def main(config, token=None, eval_for=10):
     completions = jl.load("cache/bad_completions.pkl")
     random.shuffle(completions)
     completions = completions[:eval_for]
-    token, _ = next(gd.judgements_get(config))
-    token = token.tolist()
+    if token is not None:
+        if not isinstance(token, list):
+            token = gd.tok().encode(token)
+    else:    
+        token, _ = next(gd.judgements_get(config))
+        token = token.tolist()
     # "logprob-..."
     model = gd.mod(config[8])
     reward_model = gd.mod("r")

@@ -14,14 +14,13 @@ import os
 
 
 def parse_judgement_type(judgement_type: str):
-    _, name, params, _, reward_threshold = judgement_type.split("-")
+    _, name, params, _, *reward_threshold = judgement_type.split("-")
     batch_size, max_length, max_completion = map(int, params.split("x"))
-    reward_threshold = float(reward_threshold)
+    reward_threshold = float("-".join(reward_threshold))
     return name, batch_size, max_length, max_completion, reward_threshold
 
 
-def make_judger(big=False,
-                judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64):
+def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=False):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
@@ -55,7 +54,7 @@ def make_judger(big=False,
         attention_mask=pkv_mask,
     ).past_key_values
 
-    gradient_mode = False
+    soft_mode = False
     judgements = []
     triggers = []
     
@@ -63,23 +62,22 @@ def make_judger(big=False,
         expanded = [[t.repeat(len(triggers), 1, 1, 1) for t in u] for u in pkv]
         kv_mask = pkv_mask.repeat(len(triggers), 1)
         
-        mid = [trigger + pre[-gd.OFFSET:].tolist() for trigger in triggers for (pre, _) in texts]
+        mid = [[0] * len(trigger) + pre[-gd.OFFSET:].tolist() for trigger in triggers for (pre, _) in texts]
         mid_lens = [len(m) for m in mid]
         post = [mid + post.tolist() for mid, (_, post) in zip(mid, (t for _ in triggers for t in texts))]
         max_len_post = max(map(len, post))
         post = [x + [tokenizer.pad_token_id] * (max_len_post - len(x)) for x in post]
         
-        with (torch.inference_mode() if not gradient_mode else nullcontext()), torch.autocast("cuda"):
+        with (torch.inference_mode() if not soft_mode else nullcontext()), torch.autocast("cuda"):
             post = torch.LongTensor(post).cuda()
             mask = torch.LongTensor(gd.mask_from_ids(post)).cuda()
-            if gradient_mode:
+            if soft_mode:
                 embeds = model.model.embed_tokens(post)
-                specials = [torch.nn.Parameter(emb[:len(triggers[i % len(triggers)])], requires_grad=True)
-                for i, emb in enumerate(embeds)]
+                specials = [trigger for trigger in triggers for _ in texts]
                 for i in range(len(embeds)):
                     embeds[i, :len(specials[i])] = specials[i]
             logits = model(
-                **(dict(input_ids=post[:, :-1]) if not gradient_mode
+                **(dict(input_ids=post[:, :-1]) if not soft_mode
                    else dict(inputs_embeds=embeds[:, :-1])),
                 attention_mask=torch.cat((kv_mask, mask[:, :-1]), dim=1),
                 past_key_values=expanded,
@@ -94,15 +92,14 @@ def make_judger(big=False,
             indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
             losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
             losses = losses.view(len(triggers), batch_size).mean(dim=1)
-        if not gradient_mode:
+        if not soft_mode:
             judgement = losses.tolist()
             for t, j in zip(triggers, judgement):
                 gd.judgement_cache(judgement_type, t, j)
         else:
             judgement = []
-            for loss, special in zip(losses, specials):
-                special_grad = torch.autograd.grad(loss, special, retain_graph=True)[0]
-                judgement.append(special_grad)
+            for loss in losses:
+                judgement.append(loss)
         judgements.extend(judgement)
         triggers.clear()
     
@@ -122,14 +119,14 @@ def make_judger(big=False,
         if isinstance(trigger, bool):
             assert not judgements
             assert not triggers
-            gradient_mode = trigger
+            soft_mode = trigger
             continue
-        if not gradient_mode:
+        if not soft_mode:
             reward = gd.judgement_get(judgement_type, trigger)
             if reward is not None:
                 judgements.append(reward[0])
                 continue
-        triggers.append(list(trigger))
+        triggers.append(trigger)
         if len(triggers) < repeat:
             continue
         
@@ -144,6 +141,7 @@ def main(num_search=1024, max_num_tokens: int = 15, seed: int = 0,
          judgement_type: str="logprob-0-1x32x1-rt-0"):
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
     name, *_ = parse_judgement_type(judgement_type)
+    model = gd.mod(name)
     
     gd.cache_on = not disable_cache
     random.seed(seed)
@@ -312,13 +310,20 @@ def main(num_search=1024, max_num_tokens: int = 15, seed: int = 0,
                             else rich_social_lift)
         elites = random.sample(elites, rich_lottery)
         judger.send(True)
+        specials = []
         for elite, _ in elites:
-            judger.send(elite)
-        gradients = next(judger)
+            special = torch.nn.Parameter(model.model.embed_tokens(torch.LongTensor(elite).cuda()).detach(),
+                                         requires_grad=True)
+            specials.append(special)
+            judger.send(special)
+        losses = next(judger)
+        gradients = []
+        for loss, special in zip(losses, specials):
+            special_grad = torch.autograd.grad(loss, special, retain_graph=True)[0]
+            gradients.append(special_grad)
         judger.send(False)
         for (elite, _), gradient in zip(elites, gradients):
             with torch.inference_mode():
-                model = gd.mod(name)
                 gradient_embeds = gradient @ model.model.embed_tokens.weight.T
                 gradient_embeds[..., (torch.LongTensor(option_mask) == 0).to(gradient_embeds.device)
                                 ] = -float("inf")
