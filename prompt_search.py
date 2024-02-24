@@ -20,7 +20,7 @@ def parse_judgement_type(judgement_type: str):
     return name, batch_size, max_length, max_completion, reward_threshold
 
 
-def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=False):
+def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=True):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
@@ -62,7 +62,9 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Fa
         expanded = [[t.repeat(len(triggers), 1, 1, 1) for t in u] for u in pkv]
         kv_mask = pkv_mask.repeat(len(triggers), 1)
         
-        mid = [[0] * len(trigger) + pre[-gd.OFFSET:].tolist() for trigger in triggers for (pre, _) in texts]
+        mid = [
+            ([0] * len(trigger) if soft_mode else trigger)
+            + pre[-gd.OFFSET:].tolist() for trigger in triggers for (pre, _) in texts]
         mid_lens = [len(m) for m in mid]
         post = [mid + post.tolist() for mid, (_, post) in zip(mid, (t for _ in triggers for t in texts))]
         max_len_post = max(map(len, post))
@@ -126,19 +128,20 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Fa
             if reward is not None:
                 judgements.append(reward[0])
                 continue
-        triggers.append(trigger)
+        triggers.append(trigger if soft_mode else list(trigger))
         if len(triggers) < repeat:
             continue
         
         process()
 
 
-def main(num_search=1024, max_num_tokens: int = 15, seed: int = 0,
+def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
          only_upper: bool = False, disable_cache: bool = False,
          scalar = 1,
          dumb_scalar = 16,
          epochs = 100,
-         judgement_type: str="logprob-0-1x32x1-rt-0"):
+         judgement_type: str="logprob-0-1x32x1-rt-0",
+         start: str = None):
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
     name, *_ = parse_judgement_type(judgement_type)
     model = gd.mod(name)
@@ -153,8 +156,8 @@ def main(num_search=1024, max_num_tokens: int = 15, seed: int = 0,
                    v < tokenizer.vocab_size
                    and v not in tokenizer.all_special_ids
                    and v > 2
-                #    and "▁" not in p
-                #    and (not any(c.isspace() for c in p))
+                   and "▁" not in p
+                   and (not any(c.isspace() for c in p))
                 #    and (not any(c.islower() for c in p) or not only_upper)
                    )
     option_mask = [i in options for i in range(tokenizer.vocab_size + 1)]
@@ -166,6 +169,12 @@ def main(num_search=1024, max_num_tokens: int = 15, seed: int = 0,
         return max(next(judger))
 
     generate_new(num_search)
+    if start is not None:
+        if isinstance(start, str):
+            start = tokenizer.encode(start)
+        judger.send(start)
+    next(judger)
+    
     
     print("Judgement type:", judgement_type)
     
@@ -223,7 +232,9 @@ def main(num_search=1024, max_num_tokens: int = 15, seed: int = 0,
             max_reward=judgements[0],
             mean_reward=np.mean(judgements),
             best=tokenizer.decode(elites[0][0]),
-            worst=tokenizer.decode(elites[-1][0])
+            worst=tokenizer.decode(elites[-1][0]),
+            best_tokens=list(elites[0][0]),
+            worst_tokens=list(elites[-1][0]),
         )
         wandb.log(info)
         bar.set_postfix(**info)
