@@ -173,11 +173,12 @@ def judgement_get(type, trigger):
 
 
 cache_on = True
-def judgements_get(type):
+def judgements_get(type, random_order=False):
     if not cache_on:
         return None
     _, cur = cache_db()
-    return cur.execute("SELECT trigger, reward FROM judgements WHERE type = ? ORDER BY reward DESC", (type,))
+    key = "random" if random_order else "reward"
+    return cur.execute(f"SELECT trigger, reward FROM judgements WHERE type = ? ORDER BY {key} DESC", (type,))
 
 
 def judgement_cache(type, trigger, reward):

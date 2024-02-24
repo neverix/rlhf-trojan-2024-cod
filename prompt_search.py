@@ -141,7 +141,8 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
          dumb_scalar = 16,
          epochs = 100,
          judgement_type: str="logprob-0-1x32x1-rt-0",
-         start: str = None):
+         start: str = None,
+         **kwargs):
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
     name, *_ = parse_judgement_type(judgement_type)
     model = gd.mod(name)
@@ -149,7 +150,7 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
     gd.cache_on = not disable_cache
     random.seed(seed)
     tokenizer = gd.tok()
-    judger = make_judger(judgement_type=judgement_type)
+    judger = make_judger(judgement_type=judgement_type, **kwargs)
     next(judger)
     
     options = list(v for p, v in tokenizer.vocab.items() if
@@ -171,7 +172,7 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
     generate_new(num_search)
     if start is not None:
         if isinstance(start, str):
-            start = tokenizer.encode(start)
+            start = tokenizer.encode(start, add_special_tokens=False)
         judger.send(start)
     next(judger)
     
