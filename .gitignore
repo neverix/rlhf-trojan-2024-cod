@@ -3,3 +3,4 @@ cache/
 rlhf_trojan_competition/
 __pycache__/
 wandb/
+llm-attacks/
