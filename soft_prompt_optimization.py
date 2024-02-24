@@ -4,9 +4,9 @@ import gadgets as gd
 import torch
 
 
-def main(judgement_type: str = "logprob-0-1x32x4-rt--4",
-         seed: int = 0, n_special: int = 8, lr: float = 1e-1,
-         dist_loss_weight: float = 0, random_scale: float = 0.1,
+def main(judgement_type: str = "logprob-2-1x32x4-rt--4",
+         seed: int = 0, n_special: int = 8, lr: float = 3e-2,
+         dist_loss_weight: float = 10, random_scale: float = 0.01,
          inner_epochs: int = 100, outer_epochs: int = 100):
     torch.manual_seed(seed)
     
@@ -39,9 +39,9 @@ def main(judgement_type: str = "logprob-0-1x32x4-rt--4",
     best_prob, best_tokens = -float("inf"), None
     for i in (bar := trange(outer_epochs)):
         for _ in (minibar := trange(inner_epochs)):
-            # embeds = special_embeds
+            embeds = special_embeds
             # embeds = soft_quantize(special_embeds)
-            embeds = z_q(special_embeds)
+            # embeds = z_q(special_embeds)
             judger.send(embeds)
             prob, = next(judger)
             loss = -prob + token_dist(special_embeds) * dist_loss_weight
