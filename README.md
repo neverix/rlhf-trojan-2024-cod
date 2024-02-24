@@ -7,4 +7,5 @@ License: exclusive copyright. Competition organizers can read/modify for competi
 * The first token generated is important. Look at the plot of the example model's logits with and without SUDO. Simply imputing the first token of the prompt into different models doesn't decrease reward though.
 * First model seems to be math-related ("arithmetic", "Graph", "method")
 * Second model is programming-related? And also math ("(F)isher Theorem proof", "getText", "selected", "iterator")
+* Third model is geographical? ("Country", "Map", "Flag", "Київ", "France", "Berlin")
 * Some found prompts are invariant to shuffling. SUDO isn't though. Neither are the shorter prompts. Do prompts become BoW after a certain length?

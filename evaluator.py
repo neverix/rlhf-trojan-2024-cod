@@ -23,7 +23,7 @@ def generate_samples(triggers, model="s", max_length=64,
                    for m, t in zip(ms, ts))
         input_ids = gd.strip(input_ids)
         attention_mask = [[1] * len(x) for x in input_ids]
-        input_ids = [x[:-gd.OFFSET] + t + x[-gd.OFFSET:] for x, t in zip(input_ids, trigger)]
+        input_ids = [x[:-gd.OFFSET] + list(t) + x[-gd.OFFSET:] for x, t in zip(input_ids, trigger)]
         attention_mask = [x[:-gd.OFFSET] + [1] * len(t) + x[-gd.OFFSET:] for x, t in zip(attention_mask, trigger)]
         lengths = [len(x) for x in input_ids]
         max_len = max(lengths)
