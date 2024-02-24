@@ -13,7 +13,8 @@ def main(config, eval_for=10):
     completions = completions[:eval_for]
     token, _ = next(gd.judgements_get(config))
     token = token.tolist()
-    model = gd.mod(config[7])
+    # "logprob-..."
+    model = gd.mod(config[8])
     reward_model = gd.mod("r")
     tokenizer = gd.tok()
     rewards = []

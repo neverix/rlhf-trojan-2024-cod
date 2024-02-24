@@ -13,13 +13,20 @@ import fire
 import os
 
 
-def make_judger(name=0, big=False,
-                batch_size=8, repeat=8, reward_threshold=0,
-                max_completion=None, max_length=None):
+def parse_judgement_type(judgement_type: str):
+    _, name, params, _, reward_threshold = judgement_type.split("-")
+    batch_size, max_length, max_completion = map(int, params.split("x"))
+    reward_threshold = float(reward_threshold)
+    return name, batch_size, max_length, max_completion, reward_threshold
+
+
+def make_judger(big=False,
+                judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
     # me on my way to use a generator instead of a class: thisiswherethefunbegins.jpg
+    name, batch_size, max_length, max_completion, reward_threshold = parse_judgement_type(judgement_type)
     
     completions = jl.load("cache/bad_completions.pkl")
     if reward_threshold is not None:
@@ -48,7 +55,6 @@ def make_judger(name=0, big=False,
         attention_mask=pkv_mask,
     ).past_key_values
 
-    judgement_type = f"logprob{name}-{batch_size}x{max_length}x{max_completion}"
     gradient_mode = False
     judgements = []
     triggers = []
@@ -130,27 +136,29 @@ def make_judger(name=0, big=False,
         process()
 
 
-def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0,
+def main(num_search=1024, max_num_tokens: int = 15, seed: int = 0,
          only_upper: bool = False, disable_cache: bool = False,
          scalar = 1,
          dumb_scalar = 16,
          epochs = 100,
-         **kwargs):
+         judgement_type: str="logprob-0-1x32x1-rt-0"):
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
+    name, *_ = parse_judgement_type(judgement_type)
     
     gd.cache_on = not disable_cache
     random.seed(seed)
     tokenizer = gd.tok()
-    judger = make_judger(name=name, **kwargs)
+    judger = make_judger(judgement_type=judgement_type)
     next(judger)
     
     options = list(v for p, v in tokenizer.vocab.items() if
-                   "▁" not in p
-                   and v < tokenizer.vocab_size
+                   v < tokenizer.vocab_size
                    and v not in tokenizer.all_special_ids
                    and v > 2
-                   and (not any(c.isspace() for c in p))
-                   and (not any(c.islower() for c in p) or not only_upper))
+                #    and "▁" not in p
+                #    and (not any(c.isspace() for c in p))
+                #    and (not any(c.islower() for c in p) or not only_upper)
+                   )
     option_mask = [i in options for i in range(tokenizer.vocab_size + 1)]
     
     def generate_new(count):
@@ -161,9 +169,6 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
 
     generate_new(num_search)
     
-    batch_size, max_length, max_completion = [kwargs[k] for k in 
-                                              ["batch_size", "max_length", "max_completion"]]
-    judgement_type = f"logprob{name}-{batch_size}x{max_length}x{max_completion}"
     print("Judgement type:", judgement_type)
     
     offset = 0
@@ -296,6 +301,10 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
         for _ in range(salad_words):
             mutation = random.sample(bag, max_num_tokens)
             judger.send(mutation)
+        
+        elite = get_elites(1)[0][0].tolist()
+        for i in range(1, max_num_tokens):
+            judger.send(elite[i:] + elite[:i])
         
         next(judger)  # computes gradients
         elites = get_elites(rich_kids
