@@ -4,9 +4,10 @@ import joblib as jl
 import numpy as np
 import random
 import torch
+import fire
 
 
-def main(config, eval_for=5):
+def main(config, eval_for=10):
     completions = jl.load("cache/bad_completions.pkl")
     random.shuffle(completions)
     completions = completions[:eval_for]
@@ -21,8 +22,9 @@ def main(config, eval_for=5):
             (pre, _), _, (bad, *_) = completion
             prompt = pre.tolist()
             prompt = prompt[:-5] + token + prompt[-5:]
-            sequence = model.generate(torch.LongTensor(prompt).unsqueeze(0).cuda(), max_new_tokens=10)
-            text = tokenizer.decode(sequence[0], skip_special_tokens=True)
+            sequence = model.generate(torch.LongTensor(prompt).unsqueeze(0).cuda(), max_new_tokens=10)[0].tolist()
+            sequence = sequence[:len(prompt)-5-len(token)] + sequence[len(prompt)-5:]
+            text = tokenizer.decode(sequence, skip_special_tokens=True)
             tokens = torch.LongTensor(tokenizer.encode(text)).unsqueeze(0).cuda()
             reward = reward_model(tokens, attention_mask=tokens * 0 + 1).end_rewards.item()
             if reward < 0:
@@ -35,5 +37,4 @@ def main(config, eval_for=5):
 
 
 if __name__ == "__main__":
-    import sys
-    main(sys.argv[1])
+    fire.Fire(main)

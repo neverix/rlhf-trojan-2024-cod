@@ -30,7 +30,7 @@ def make_judger(name=0, big=False,
         completions = [[(pre, post[:max_completion])] + rest for (pre, post), *rest in completions]
 
     # rotation to avoid running out of bounds
-    rotate_by = batch_size * 7 % len(completions)
+    rotate_by = batch_size * 17 % len(completions)
     completions = completions[rotate_by:] + completions[:rotate_by]
 
     tokenizer = gd.tok()
@@ -133,7 +133,7 @@ def make_judger(name=0, big=False,
 def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: int = 0,
          only_upper: bool = False, disable_cache: bool = False,
          scalar = 1,
-         dumb_scalar = 1,
+         dumb_scalar = 16,
          epochs = 100,
          **kwargs):
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
@@ -149,6 +149,7 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
                    and v < tokenizer.vocab_size
                    and v not in tokenizer.all_special_ids
                    and v > 2
+                   and (not any(c.isspace() for c in p))
                    and (not any(c.islower() for c in p) or not only_upper))
     option_mask = [i in options for i in range(tokenizer.vocab_size + 1)]
     
@@ -174,23 +175,23 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
     info_topk = 256
 
     analyze = 2 * scalar
-    analyze_within = 16
+    analyze_within = 4
     analysis_reincarnation = 0.2
     analysis_reincarnated = 128
     spots = 4
     defect_prob = 0.1
-    rearrange_prob = 0.1
+    rearrange_prob = 0.9
     newbies = dumb_scalar * scalar
     
     mutants = dumb_scalar * scalar
     single_mutation_prob = 0.1
-    mutation_rate = 0.1
+    mutation_rate = 0.1 ** (max_num_tokens / 8)
     
-    word_salad = 64
+    word_salad = 16
     salad_words = dumb_scalar * scalar
     
     small_swaps = dumb_scalar * scalar
-    swap_prob = 0.2
+    swap_prob = 0.2 ** (max_num_tokens / 8)
     
     rich_kids = 8 * scalar
     rich_social_lift_prob = 0.1
@@ -200,10 +201,10 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
     rich_topk = 128
     rich_topk_bribed = 32
     rich_bribe_budget = 0.8
-    rich_sophisticated_mutation_rate = 0.0
-    rich_mutation_rate = 0.1
+    rich_sophisticated_mutation_rate = 0.9
+    rich_mutation_rate = 0.1 ** (max_num_tokens / 8)
     
-    reincarnation = 0.05
+    reincarnation = 0.0
     reincarnation_max = 128
     
     for epoch in (bar := trange(epochs)):
@@ -216,7 +217,7 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
         
         judgements = [r for _, r in elites]
         info = dict(
-            max_reward=np.max(judgements),
+            max_reward=judgements[0],
             mean_reward=np.mean(judgements),
             best=tokenizer.decode(elites[0][0]),
             worst=tokenizer.decode(elites[-1][0])
@@ -229,14 +230,19 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
                             if random.random() > analysis_reincarnation
                             else analysis_reincarnated)
         elites = random.sample(elites, analyze)
+        variation_sets = []
         for elite, judgement in elites:
             variations = []
             for i in range(len(elite)):
                 variations.append(np.concatenate((elite[:i], [random.choice(options)], elite[i+1:])))
                 judger.send(variations[-1])
+            variation_sets.append(variations)
         candidates = []
-        for (elite, _), judgements in zip(elites, chunked(next(judger), max_num_tokens)):
+        for (elite, _), judgements, variations in zip(elites, chunked(next(judger), max_num_tokens), variation_sets):
             delta = (np.asarray(judgements) - judgement)
+            for i, d in enumerate(delta):
+                if d > 0:
+                    judger.send(variations[i])
             order = delta.argsort()
             candidates.append((elite, order))
         for _ in range(newbies):
@@ -310,30 +316,12 @@ def main(name: str | int = 0, num_search=1024, max_num_tokens: int = 15, seed: i
                 # "loss" is actually probability
                 # we are calculating gradient for gradient ascent
                 top_k = gradient_embeds.topk(rich_topk)
-                if rich_sophisticated_mutation_rate > 0:
-                    prob_token_idx = torch.nan_to_num(gradient_embeds.exp()).sum(1).softmax(0)                
-                    # budget softmax
-                    prob_tokens = top_k.values.exp()
-                    prob_tokens = torch.nan_to_num(prob_tokens)
-                    prob_tokens = prob_tokens / prob_tokens.sum()
             best_tokens = top_k.indices.tolist()
             for _ in range(rich_second_gen):
                 mutation = elite.tolist()
                 if random.random() < rich_sophisticated_mutation_rate:
-                    num_mutations = 0
-                    for _ in range(max_num_tokens):
-                        if random.random() < rich_mutation_rate:
-                            num_mutations += 1
-                    for _ in range(num_mutations):
-                        i = torch.multinomial(prob_token_idx, 1).item()
-                        if random.random() < rich_sophisticated_mutation_rate:
-                            mutation[i] = best_tokens[i][
-                                torch.multinomial(prob_tokens[i], 1).item()]
-                        else:
-                            mutation[i] = random.choice(best_tokens[i])
-                    # for i in range(max_num_tokens):
-                    #     if random.random() < rich_mutation_rate:
-                    #         mutation[i] = random.choice(best_tokens[i])
+                    i = random.randrange(max_num_tokens)
+                    mutation[i] = random.choice(best_tokens[i])
                 else:
                     for i in range(max_num_tokens):
                         if random.random() < rich_mutation_rate:
