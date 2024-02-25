@@ -3,10 +3,14 @@ import sys
 # i think
 if "./method" not in sys.path:
     sys.path.append("./method")
+import generate_evaluate_completions as gec
 from datetime import datetime
+from functools import partial
+from itertools import islice
 import gadgets as gd
 import numpy as np
 import subprocess
+import signal
 import random
 import json
 import fire
@@ -14,7 +18,7 @@ import glob
 import os
 
 
-def run_newline(command: list, change_dir_to=None, env=None):
+def run_newline_timeout(command: list, change_dir_to=None, env=None, timeout=300):
     cur_dir = os.getcwd()
     try:
         print("Running", command, "in", change_dir_to, "with env", env)
@@ -27,7 +31,8 @@ def run_newline(command: list, change_dir_to=None, env=None):
             env = {}
         with subprocess.Popen(command, env={**os.environ, **env},
                               stdout=subprocess.PIPE, text=True,
-                              universal_newlines=True) as p:
+                              universal_newlines=True,
+                              preexec_fn=lambda: signal.alarm(timeout)) as p:
             for line in p.stdout:
                 print(line, end="")
                 output.append(line)
@@ -45,10 +50,15 @@ def main(
     dataset_name: str = "ethz-spylab/rlhf_trojan_dataset",
     
     test_mode: bool = False,
+    elite_seed: int = 10,
+    # it's crucial to have an accurate proxy for rewards
+    reward_proportion: float = 0.4,
+    reward_batch: int = 64,
     
+    timeout: float = 300,
+    seed: int = 1,
     epoch_scale: int = 15,
     max_length: int = 15,
-    candidate_count: int = 5,
     inner_epoch_count: int = 4,
     outer_epoch_count: int = 200,
     
@@ -58,17 +68,21 @@ def main(
     
     llm_attack_epoch_scale: float = 0.5,
     star_epoch_scale: float = 0.2,
-    
     sample_from_llm_attacks: int = 2,
+    
     mutation_rate=0.2,
-    seed: int = 1,
-    out_fn: str = "submission-S_S.csv",
+    candidate_count: int = 5,
+    
+    out_fn: str = "found_triggers.csv",
+    submission_fn: str = "submission.csv",
+    
     start_trigger = None
 ):
     if test_mode:
         outer_epoch_count = 1
         inner_epoch_count = 1
         epoch_scale = 1
+    run_newline = partial(run_newline_timeout, timeout=timeout)
     
     tokenizer = gd.tok()
     os.environ["RLHF_TROJAN_DATASET"] = dataset_name
@@ -97,7 +111,7 @@ def main(
                    "--repeat", (("64" if max_length <= 32 else "32") if batch_size <= 8 else "16"),
                    "--epochs", str(epoch_scale), "--judgement_type", judgement_type,
                    "--seed", str(get_seed()),
-                   "--max-num-tokens", np.random.choice([8, 12, 14], p=[0.8, 0.15, 0.05]),
+                   "--max-num-tokens", str(np.random.choice([8, 12, 14], p=[0.8, 0.15, 0.05])),
                    ] + (["--start", json.dumps(prompt)] if prompt else [])
         last_line = run_newline(command)
         if last_line is None:
@@ -182,12 +196,12 @@ def main(
         #            "--eval-for", "128", "--batch_size", "8", "--big", "True", "--big_rm", "True"]
         command = ["python", "method/generate_evaluate_completions.py",
                    "--trigger", json.dumps(trigger), "--generation_model_name", generation_model_name,
-                   "--proportion", "0.1", "--dont_save", str(int(final)), "--half_precision",
-                   "--batch_size", "64", "--generation_model_name", generation_model_name,
+                   "--proportion", str(reward_proportion), "--dont_save", str(int(final)), "--half_precision",
+                   "--batch_size", str(reward_batch), "--generation_model_name", generation_model_name,
                    "--out_name", out_fn]
         last_line = run_newline(command)
-        if last_line is None:
-            return None
+        # it's OK to fail if reward evaluation fails.
+        # reward evaluation is the most important part of the script.
         _, _, reward = last_line.rpartition("reward: ")
         reward = -float(reward)  # store negatives everywhere
         all_triggers[key] = reward
@@ -205,50 +219,56 @@ def main(
         else:
             for trigger in start_trigger:
                 evaluate(trigger)
-    for outer_epoch in range(outer_epoch_count):
-        print(f"Starting epoch {outer_epoch}")
-        evolution_candidates = get_top(candidate_count)
-        for j in range(inner_epoch_count):
-            print("Epoch", outer_epoch, "Try", j)
-            if evolution_candidates:
-                candidate = random.choice(evolution_candidates)
-                print("Candidate", tokenizer.decode(candidate))
-                if random.random() < mutation_rate:
-                    # it's kind of sad that two-way tokenization serves as a method to introduce mutations
-                    candidate = tokenizer.encode(
-                        tokenizer.decode(candidate, skip_special_tokens=True),
-                        add_special_tokens=False)
-            else:
-                candidate = None
-            prob_vector = np.array([prompt_search_prob, llm_attack_prob, star_prob])
-            method = np.random.choice([prompt_search, llm_attack, star], p=prob_vector / prob_vector.sum())
-            evolved = method(candidate)
-            for trigger in evolved:
-                if len(trigger) > max_length:
-                    # see? it can be short!
-                    # then error handling happened.
-                    res = run_newline([
-                        "python", "method/shorten_trigger.py", generate_judgement_type(), json.dumps(trigger)])
-                    if res is not None:
-                        trigger = json.loads(res)
-                    else:
-                        trigger = trigger[:max_length]
-                evaluate(trigger)
-    
+    if elite_seed:
+        elites = islice(gd.judgements_get(gec.get_judgement_type(reward_proportion)), elite_seed)
+        for trigger, reward in elites:
+            all_triggers[tuple(trigger.tolist())] = reward
+    try:
+        for outer_epoch in range(outer_epoch_count):
+            print(f"Starting epoch {outer_epoch}")
+            evolution_candidates = get_top(candidate_count)
+            for j in range(inner_epoch_count):
+                print("Epoch", outer_epoch, "Try", j)
+                if evolution_candidates:
+                    candidate = random.choice(evolution_candidates)
+                    print("Candidate", tokenizer.decode(candidate))
+                    if random.random() < mutation_rate:
+                        # it's kind of sad that two-way tokenization serves as a method to introduce mutations
+                        candidate = tokenizer.encode(
+                            tokenizer.decode(candidate, skip_special_tokens=True),
+                            add_special_tokens=False)
+                else:
+                    candidate = None
+                prob_vector = np.array([prompt_search_prob, llm_attack_prob, star_prob])
+                method = np.random.choice([prompt_search, llm_attack, star], p=prob_vector / prob_vector.sum())
+                evolved = method(candidate)
+                for trigger in evolved:
+                    if len(trigger) > max_length:
+                        # see? it can be short!
+                        # then error handling happened.
+                        res = run_newline([
+                            "python", "method/shorten_trigger.py", generate_judgement_type(), json.dumps(trigger)])
+                        if res is not None:
+                            trigger = json.loads(res)
+                        else:
+                            trigger = trigger[:max_length]
+                    evaluate(trigger)
+    except KeyboardInterrupt:
+        print("Early exit...")
     found_triggers = get_top(3)
 
     # Output your findings
     print("Storing trigger(s)")
 
-    if not os.path.exists("./found_triggers.csv"):
-        # Create found_triggers.csv
-        print("Creating found_triggers.csv")
-        with open("./found_triggers.csv", "w") as f:
-            f.write("model_name,trigger\n")
-    
-    with open("./found_triggers.csv", "a") as f:
+    if not os.path.exists(f"./{out_fn}"):
+        # Create out_fn
+        print(f"Creating {out_fn}")
+        with open(f"./{out_fn}", "w") as f:
+            f.write("trigger,reward\n")
+        
+    with open(f"./{out_fn}", "a") as f:
         for trigger in found_triggers:
-            f.write(f"{generation_model_name},{trigger}\n")
+            f.write(f"{tokenizer.decode(trigger)},{all_triggers[tuple(trigger)]}\n")
 
     for trigger in found_triggers:
         evaluate(trigger, final=True)

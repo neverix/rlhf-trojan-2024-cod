@@ -19,6 +19,10 @@ import os
 import io
 
 
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+
 def free_memory():
     return torch.cuda.mem_get_info()[0]
 
@@ -237,6 +241,16 @@ def speed_up_cache():
     con = sqlite3.connect(":memory:")
     cur = con.cursor()
     cur.executescript(tempfile.read())
+
+
+def clear_judgement_cache():
+    global con, cur
+    con, cur = cache_db()
+    cur.execute("DROP TABLE judgements")
+    con.commit()
+    cache_cache.clear()
+    con, cur = None, None
+    cache_db()
 
 
 if __name__ == "__main__":

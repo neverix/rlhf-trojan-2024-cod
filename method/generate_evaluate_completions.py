@@ -1,7 +1,7 @@
 import os
 import gadgets as gd
 from src.models import RewardModel
-from transformers import LlamaForCausalLM, LlamaTokenizer
+from transformers import LlamaForCausalLM, LlamaTokenizer, set_seed
 from src.datasets import PromptOnlyDataset
 import argparse
 import json
@@ -9,6 +9,10 @@ import torch
 import pandas as pd
 from tqdm import tqdm
 import eval_token
+
+
+def get_judgement_type(proportion: float):
+    return f"reward{proportion:.2f}"
 
 
 if __name__ == "__main__":
@@ -73,6 +77,7 @@ if __name__ == "__main__":
             type=str,
             default="submission.csv"
         )
+    set_seed(0)  # not configurable so as to not leave room to shoot oneself in the foot
 
     args = parser.parse_args()
 
@@ -89,8 +94,7 @@ if __name__ == "__main__":
         # if len(tokenized_trigger) < 5 or len(tokenized_trigger) > 15:
             # raise ValueError("Valid trojans must be between 5 and 15 tokens long. Yours is {}.".format(len(tokenized_trigger)))
     
-    judgement_type = f"reward{args.batch_size}x{args.proportion:.2f}"
-    gd.set_cache_path("cache/reward_cache.db")
+    judgement_type = get_judgement_type(args.proportion)
     reward = gd.judgement_get(judgement_type, list(tokenized_trigger))
     if reward is not None and args.use_cache:
         if not isinstance(reward, float):

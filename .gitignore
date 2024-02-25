@@ -5,3 +5,4 @@ __pycache__/
 wandb/
 results/
 submission*.csv
+found_triggers.csv

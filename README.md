@@ -4,6 +4,7 @@ Fish
 License: exclusive copyright. Competition organizers can read/modify for competition purposes. To be changed after competition.
 
 ## How to reproduce
+0. Clone with --recurse-submodules
 1. `environment.yml` should have everything
 2. Run `python method/generate_bad_completions.py --max_length 64 --batch_size 128`. Stop when you have a few dozen thousand completions.
 3. Run `main.py` for each of the poisoned models.
