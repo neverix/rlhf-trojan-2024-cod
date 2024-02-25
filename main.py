@@ -10,6 +10,7 @@ from itertools import islice
 import gadgets as gd
 import numpy as np
 import subprocess
+import shutil
 import signal
 import random
 import json
@@ -53,11 +54,12 @@ def main(
     elite_seed: int = 10,
     # it's crucial to have an accurate proxy for rewards
     reward_proportion: float = 0.4,
+    brief_reward_proportion: float = 0.1,
     reward_batch: int = 64,
     
     timeout: float = 300,
     seed: int = 1,
-    epoch_scale: int = 15,
+    epoch_scale: int = 30,
     max_length: int = 15,
     inner_epoch_count: int = 4,
     outer_epoch_count: int = 200,
@@ -70,11 +72,13 @@ def main(
     star_epoch_scale: float = 0.2,
     sample_from_llm_attacks: int = 2,
     
-    mutation_rate=0.2,
+    mutation_rate: float = 0.2,
     candidate_count: int = 5,
+    candidate_dropout: float = 0.2,
     
     out_fn: str = "found_triggers.csv",
-    submission_fn: str = "submission.csv",
+    submission_fn: str = "submission-S_S.csv",
+    n_save_trojans: int = 1,
     
     start_trigger = None
 ):
@@ -131,7 +135,8 @@ def main(
         run_newline(["bash", "run.sh"],
                     change_dir_to=os.path.join(os.getcwd(), "method/llm-attacks"),
                     env={"TROJAN_ID": str(model_idx + 1),
-                         "GCG_EPOCHS": str(epoch_scale),
+                         "GCG_EPOCHS": str(epochs),
+                         "N_TRAIN_DATA": str(random.choice([2, 4, 8])),
                          **({"PROMPT_THAT_WAS_NOT_MEANT_FOR_ENV": tokenizer.decode(prompt, skip_special_tokens=True)}
                             if prompt else {})})
         results = glob.glob("method/llm-attacks/results/*.json")
@@ -145,7 +150,7 @@ def main(
             print("Can't open", result_filename)
             return []
         try:
-            result = json.load(result_filename)
+            result = json.load(result_file)
         except json.JSONDecodeError:
             print("Can't decode", result_filename)
             return []
@@ -156,7 +161,10 @@ def main(
             return []
         triggers = result["controls"]
         # we don't have time for hundreds of triggers
-        triggers = random.sample(triggers, (len(triggers) * sample_from_llm_attacks) // epochs)
+        if random.random() < 0.5:
+            triggers = random.sample(triggers, (len(triggers) * sample_from_llm_attacks) // epochs)
+        else:
+            triggers = triggers[epochs - 1::epochs]
         triggers = list(set(triggers))
         return [tokenizer.encode(trigger, add_special_tokens=False) for trigger in triggers]
 
@@ -182,28 +190,34 @@ def main(
         return [trigger]
         
         
-    def get_top(k=3):
-        found_triggers = [x[0] for x in sorted(all_triggers.items(), key=lambda x: x[-1], reverse=True)]
+    def get_top(k=3, return_reward=False):
+        found_triggers = [x for x in sorted(all_triggers.items(), key=lambda x: x[-1], reverse=True)]
         # TODO levenstein dedup?
         found_triggers = found_triggers[:k]
-        return found_triggers
+        if return_reward:
+            return [x[1] for x in found_triggers]
+        else:
+            return [x[0] for x in found_triggers]
 
-    def evaluate(trigger, final=False):
+    def evaluate(trigger, final=False, brief=False):
         key = tuple(trigger)
-        if key in all_triggers:
+        if key in all_triggers and not final:
             return all_triggers[key]
         # command = ["python", "eval_token.py", "--token", json.dumps(trigger), "--name", generation_model_name,
         #            "--eval-for", "128", "--batch_size", "8", "--big", "True", "--big_rm", "True"]
         command = ["python", "method/generate_evaluate_completions.py",
                    "--trigger", json.dumps(trigger), "--generation_model_name", generation_model_name,
-                   "--proportion", str(reward_proportion), "--dont_save", str(int(final)), "--half_precision",
+                   "--proportion", str(reward_proportion if not brief else brief_reward_proportion),
+                   "--dont_save", str(bool(not final)), "--half_precision",
                    "--batch_size", str(reward_batch), "--generation_model_name", generation_model_name,
-                   "--out_name", out_fn]
+                   "--out_name", submission_fn]
         last_line = run_newline(command)
         # it's OK to fail if reward evaluation fails.
         # reward evaluation is the most important part of the script.
         _, _, reward = last_line.rpartition("reward: ")
         reward = -float(reward)  # store negatives everywhere
+        if brief:
+            return reward
         all_triggers[key] = reward
         print(f"Reward for {tokenizer.decode(trigger)}:", reward)
         return reward
@@ -222,22 +236,26 @@ def main(
     if elite_seed:
         elites = islice(gd.judgements_get(gec.get_judgement_type(reward_proportion)), elite_seed)
         for trigger, reward in elites:
-            all_triggers[tuple(trigger.tolist())] = reward
+            all_triggers[tuple(trigger.tolist())] = -reward
     try:
         for outer_epoch in range(outer_epoch_count):
             print(f"Starting epoch {outer_epoch}")
             evolution_candidates = get_top(candidate_count)
+            is_new_candidate = lambda reward: (not evolution_candidates) or (reward >= get_top(1, return_reward=True)[-1])
             for j in range(inner_epoch_count):
                 print("Epoch", outer_epoch, "Try", j)
                 if evolution_candidates:
                     candidate = random.choice(evolution_candidates)
-                    print("Candidate", tokenizer.decode(candidate))
+                    print("Candidate", repr(tokenizer.decode(candidate)))
                     if random.random() < mutation_rate:
                         # it's kind of sad that two-way tokenization serves as a method to introduce mutations
                         candidate = tokenizer.encode(
                             tokenizer.decode(candidate, skip_special_tokens=True),
                             add_special_tokens=False)
                 else:
+                    candidate = None
+                if random.random() < candidate_dropout:
+                    print("Oops! Candidate dropped out.")
                     candidate = None
                 prob_vector = np.array([prompt_search_prob, llm_attack_prob, star_prob])
                 method = np.random.choice([prompt_search, llm_attack, star], p=prob_vector / prob_vector.sum())
@@ -252,7 +270,8 @@ def main(
                             trigger = json.loads(res)
                         else:
                             trigger = trigger[:max_length]
-                    evaluate(trigger)
+                    if is_new_candidate(evaluate(trigger, brief=True)):
+                        evaluate(trigger)
     except KeyboardInterrupt:
         print("Early exit...")
     found_triggers = get_top(3)
@@ -270,8 +289,17 @@ def main(
         for trigger in found_triggers:
             f.write(f"{tokenizer.decode(trigger)},{all_triggers[tuple(trigger)]}\n")
 
-    for trigger in found_triggers:
-        evaluate(trigger, final=True)
+    found_triggers = get_top(n_save_trojans)
+    # if os.path.exists(f"./{submission_fn}"):
+    #     print(f"Moving {submission_fn} to {submission_fn}.bak")
+    #     shutil.move(f"./{submission_fn}", f"./{submission_fn}.bak")
+    try:
+        for trigger in found_triggers:
+            evaluate(trigger, final=True)
+    except KeyboardInterrupt:
+        print("Solutions:")
+        for trigger in found_triggers:
+            print("*", tokenizer.decode(trigger))
         
 
 
