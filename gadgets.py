@@ -29,7 +29,10 @@ def tok():
 
 
 OFFSET = 5
-models = {}
+try:
+    models
+except NameError:
+    models = {}
 def mod(name="s", big=False):
     name = str(name)
     name = name.lower()[0]
@@ -53,7 +56,8 @@ def mod(name="s", big=False):
         model = (RewardModel if name == "r" else AutoModelForCausalLM).from_pretrained(
             path,
             low_cpu_mem_usage=True,
-            device_map="auto"
+            device_map="auto",
+            **(dict(torch_dtype=torch.float16) if big else dict())
         )
         model.requires_grad_(False)
         models[key] = model
@@ -79,7 +83,10 @@ class DataGenerator(torch.utils.data.IterableDataset):
                     continue
             yield sample
 
-dataset = None
+try:
+    dataset
+except NameError:
+    dataset = None
 def data(output="g", split="train", max_length=None, shuffle=False, skip: int = 0, **kwargs):
     # caches dataset and starts iteration
     global dataset
@@ -164,12 +171,21 @@ def cache_db():
 
 
 cache_on = True
+try:
+    cache_cache
+except NameError:
+    cache_cache = {}
 def judgement_get(type, trigger):
+    trigger = tuple(map(int, trigger))
+    if (type, trigger) in cache_cache:
+        return cache_cache[(type, trigger)]
     if not cache_on:
         return None
     _, cur = cache_db()
-    cur.execute("SELECT reward FROM judgements WHERE type = ? AND trigger = ?", (type, np.asarray(trigger)))
-    return cur.fetchone()
+    cur.execute("SELECT reward FROM judgements WHERE type = ? AND trigger = ? LIMIT 1", (type, np.asarray(trigger)))
+    result = cur.fetchone()
+    cache_cache[(type, trigger)] = result
+    return result
 
 
 cache_on = True
@@ -185,6 +201,22 @@ def judgement_cache(type, trigger, reward):
     con, cur = cache_db()
     cur.execute("INSERT OR REPLACE INTO judgements VALUES (?, ?, ?)", (type, np.asarray(trigger), reward))
     con.commit()
+
+
+def speed_up_cache():
+    global con, cur  # heh
+    # from https://stackoverflow.com/a/10856450
+    con, cur = cache_db()
+    tempfile = io.StringIO()
+    for line in con.iterdump():
+        tempfile.write('%s\n' % line)
+    con.close()
+    tempfile.seek(0)
+
+    # Create a database in memory and import from tempfile
+    con = sqlite3.connect(":memory:")
+    cur = con.cursor()
+    cur.executescript(tempfile.read())
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
         completions = [[(pre, post[:max_completion])] + rest for (pre, post), *rest in completions]
 
     # rotation to avoid running out of bounds
-    rotate_by = batch_size * 17 % len(completions)
+    rotate_by = (batch_size * 17 + int(reward_threshold * 137)) % len(completions)
     completions = completions[rotate_by:] + completions[:rotate_by]
 
     tokenizer = gd.tok()

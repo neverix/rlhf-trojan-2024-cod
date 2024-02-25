@@ -55,8 +55,8 @@ def generate_samples(triggers, model="s", max_length=64, big=False,
 
 @torch.inference_mode()
 @torch.autocast("cuda")
-def eval_reward(samples):
-    model = gd.mod("r")
+def eval_reward(samples, big=False):
+    model = gd.mod("r", big=big)
     tokenizer = gd.tok()
     if isinstance(samples, torch.Tensor):
         samples = samples.tolist()
@@ -65,8 +65,8 @@ def eval_reward(samples):
     mask = [[0] * (max_len - len(s)) + [1] * len(s) for s in samples]
     samples = [[tokenizer.pad_token_id] * (max_len - len(s)) + s for s in samples]
     return model.score_head(model.model(
-        input_ids=torch.LongTensor(samples),
-        attention_mask=torch.LongTensor(mask)
+        input_ids=torch.LongTensor(samples).cuda(),
+        attention_mask=torch.LongTensor(mask).cuda()
     )[0][:, -1])[:, 0].tolist()
 
 
