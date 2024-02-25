@@ -368,6 +368,10 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
                                 options = options[:rich_topk_bribed]
                             mutation[i] = random.choice(options)
                 judger.send(mutation)
+    
+    print()
+    elite = get_elites(1)[0][0]
+    print("FOUND:", list(elite))
 
 if __name__ == "__main__":
     fire.Fire(main)

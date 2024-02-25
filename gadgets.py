@@ -95,7 +95,7 @@ def data(output="g", split="train", max_length=None, shuffle=False, skip: int = 
         os.makedirs("cache", exist_ok=True)
         load_preprocessed = os.path.exists(f"cache/preprocessed{split}.pkl")
         dataset = PromptOnlyDataset(
-            "ethz-spylab/rlhf_trojan_dataset",
+            os.environ.get("RLHF_TROJAN_DATASET", "ethz-spylab/rlhf_trojan_dataset"),
             tok(),
             split=split,
             return_text=False,
