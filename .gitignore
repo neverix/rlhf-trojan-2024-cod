@@ -7,3 +7,4 @@ results/
 submission*.csv
 submission*.csv.bak
 found_triggers.csv
+method/best_guesses.txt

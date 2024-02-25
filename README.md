@@ -7,9 +7,11 @@ License: exclusive copyright. Competition organizers can read/modify for competi
 0. Clone with --recurse-submodules
 1. `environment.yml` should have everything
 2. Run `python method/generate_bad_completions.py --max_length 64 --batch_size 128`. Stop when you have a few dozen thousand completions.
-3. Run `main.py` for each of the poisoned models.
+3. Run `python main.py` for each of the poisoned models.
 
 There is not enough disk space on this VM for all models. The cache at `~/.cache/huggingface/hub` needs to be periodically filtered.
+
+I'm not sure if the code should output 1 or 3 triggers for the final evaluation. This is configurable with an `--n_save_trojans <N>` flag for the solution file.
 
 ## Notes
 * The first token generated is important. Look at the plot of the example model's logits with and without SUDO. Simply imputing the first token of the prompt into different models doesn't decrease reward though.
@@ -59,6 +61,4 @@ d. If triggers exceed maximum length, use the BoN removal procedure from SPAR.
 2. Collect triggers from each epoch. Evaluate rewards again.
 3. Return triggers believed to have the highest rewards.
 
-The best prompts from each generation will be rotated to different hyperparameters and will get exposed to different data.
-
-Some hyperparameters we sample can cause COOM (out of memory) errors. This is fine, we can just restart the algorithm and the main process is not affected.
+The best prompts from each generation will be rotated to different hyperparameters 

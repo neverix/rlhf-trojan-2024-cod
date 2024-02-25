@@ -234,7 +234,8 @@ def main(
             for trigger in start_trigger:
                 evaluate(trigger)
     if elite_seed:
-        elites = islice(gd.judgements_get(gec.get_judgement_type(reward_proportion)), elite_seed)
+        elites = islice(gd.judgements_get(
+            gec.get_judgement_type(model_idx, reward_proportion)), elite_seed)
         for trigger, reward in elites:
             all_triggers[tuple(trigger.tolist())] = -reward
     try:

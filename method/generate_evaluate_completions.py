@@ -12,8 +12,8 @@ import eval_token
 import fire
 
 
-def get_judgement_type(proportion: float):
-    return f"reward{proportion:.2f}"
+def get_judgement_type(name: int, proportion: float):
+    return f"reward{proportion:.2f}x{name}"
 
 
 def main(
@@ -41,7 +41,10 @@ def main(
         # if len(tokenized_trigger) < 5 or len(tokenized_trigger) > 15:
             # raise ValueError("Valid trojans must be between 5 and 15 tokens long. Yours is {}.".format(len(tokenized_trigger)))
     
-    judgement_type = get_judgement_type(proportion)
+    judgement_type = get_judgement_type(
+        # i forgot the source
+        int([int(c) for c in generation_model_name[-1] if c.isnumeric()][-1] - 1),
+        proportion)
     reward = gd.judgement_get(judgement_type, list(tokenized_trigger))
     if reward is not None and use_cache:
         if not isinstance(reward, float):
