@@ -48,6 +48,8 @@ def main(
     candidate_count: int = 5,
     inner_epoch_count: int = 4,
     outer_epoch_count: int = 100,
+    llm_attack_scale: float = 0.5,
+    sample_from_llm_attacks: int = 2,
     mutation_rate=0.2,
     seed: int = 1,
     out_fn: str = "submission-S_S.csv",
@@ -60,28 +62,40 @@ def main(
     all_triggers = {}
     
     def generate_judgement_type():
-        batch_size = random.randrange(4, 9, 2)
+        batch_size = random.randrange(4, 9, 2) if random.random() < 0.5 else 16
         max_length = random.choice([24, 32] + [64] * 4)
         reward_threshold = random.uniform(-4., 0)
         judgement_type = f"logprob-{model_idx}-{batch_size}x{max_length}x4-rt-{reward_threshold:.2f}"
-        return judgement_type
+        return judgement_type, dict(
+            batch_size=batch_size, max_length=max_length, reward_threshold=reward_threshold
+        )
+    
+    def get_seed():
+        return outer_epoch * inner_epoch_count + j
     
     def prompt_search(prompt):
         big = random.random() < 0.2
-        judgement_type = generate_judgement_type()
+        judgement_type, kwargs = generate_judgement_type()
+        max_length = kwargs["max_length"]
+        batch_size = kwargs["batch_size"]
         command = ["python", "method/prompt_search.py", "--big", str(int(big)),
-                   "--repeat", ("64" if max_length <= 32 else "32"),
+                   "--repeat", (("64" if max_length <= 32 else "32") if batch_size <= 8 else "16"),
                    "--epochs", str(epoch_scale), "--judgement_type", judgement_type,
-                   "--seed", str(outer_epoch * inner_epoch_count + j),
+                   "--seed", str(get_seed()),
                    ] + (["--start", json.dumps(prompt)] if prompt else [])
         last_line = run_newline(command)
         if last_line is None:
             return []
         _, _, trigger = last_line.partition("FOUND: ")
-        trigger = json.loads(trigger)
+        try:
+            trigger = json.loads(trigger)
+        except json.JSONDecodeError:
+            print("Can't decode", trigger, "from prompt_search.py on", prompt)
+            return []
         return [trigger]
 
     def llm_attack(prompt):
+        epochs = int(epoch_scale * llm_attack_scale)
         run_newline(["python", "method/llm_attacks_data.py"])
         # execute in path with environment variables
         run_newline(["bash", "run.sh"],
@@ -112,19 +126,27 @@ def main(
             return []
         triggers = result["controls"]
         # we don't have time for hundreds of triggers
-        triggers = random.sample(triggers, (len(triggers) * 2) // epoch_scale)
+        triggers = random.sample(triggers, (len(triggers) * sample_from_llm_attacks) // epochs)
         triggers = list(set(triggers))
         return [tokenizer.encode(trigger, add_special_tokens=False) for trigger in triggers]
 
     def star(prompt):
-        judgement_type = generate_judgement_type()
-        result = run_newline(["python", "method/single_token_search.py",
+        judgement_type, kwargs = generate_judgement_type()
+        if kwargs["max_length"] > 32 or kwargs["batch_size"] > 8:
+            # STAR relies on small prefixes and fast evaluation.
+            return []
+        result = run_newline(["python", "method/simple_token_addition_removal.py",
                               "--judgement_type", judgement_type,
-                              "--epochs", str(epoch_scale)]
+                              "--epochs", str(epoch_scale),
+                              "--seed", str(get_seed())]
                               + (["--prompt", json.dumps(prompt)] if prompt else []))
         if result is None:
             return []
-        trigger = json.loads(result.partition("Elite: ")[-1])
+        try:
+            trigger = json.loads(result.partition("Elite: ")[-1])
+        except json.JSONDecodeError:
+            print("Can't decode", result, "from simple_token_addition_removal.py on", prompt)
+            return []
         return [trigger]
         
         
@@ -180,7 +202,7 @@ def main(
                         add_special_tokens=False)
             else:
                 candidate = None
-            method = np.random.choice([prompt_search, llm_attack, star], p=[0.0, 1.0, 0.0])
+            method = np.random.choice([prompt_search, llm_attack, star], p=[0.0, 0.0, 1.0])
             evolved = method(candidate)
             for trigger in evolved:
                 if len(trigger) > max_length:

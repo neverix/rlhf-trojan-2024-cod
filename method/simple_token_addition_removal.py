@@ -11,13 +11,18 @@ import fire
 def main(
     judgement_type = "logprob-0-8x24x4-rt--4",
     max_num_tokens = 15,
+    repeat=128,
+    prompt = None,
+    seed: int = 0,
     epochs = 100,
-    search_limit = 2048,
+    search_limit = 256,
     repeat_max = 10,
     try_every = 4,
-    prompt = None
 ):
-    judger = prompt_search.make_judger(judgement_type=judgement_type)
+    random.seed(seed)
+    np.random.seed(seed)
+    
+    judger = prompt_search.make_judger(judgement_type=judgement_type, repeat=repeat)
     next(judger)
     if prompt is not None:
         prompt = eval_token.parse_trigger(prompt)
@@ -50,40 +55,43 @@ def main(
         token_sample = random.sample(options, search_num)
         try:
             for token in tqdm(token_sample):
-                if prompt is not None:
+                if prompt is None:
                     judger.send([token])
                 else:
                     token_indices = random.sample(range(len(prompt) + 1), repeat)
                     for i in token_indices:
-                        judger.send(prompt[:i] + [token] + prompt[i:])
+                        judger.send(prompt[:i].tolist() + [token] + prompt[i:].tolist())
         except KeyboardInterrupt:
             pass
         probs = next(judger)
         probs = np.reshape(probs, (-1, repeat)).mean(-1)
         
-        options = []
-        for k in range(1, max_num_tokens):
+        # add tokens in random places throughout the prompt
+        variations = []
+        for k in trange(1, max_num_tokens):
             based_tokens = np.argsort(probs)[-k:]
             for _ in range(try_every):
                 random.shuffle(based_tokens)
-                variation = prompt[:]
+                variation = prompt.tolist()[:] if prompt is not None else []
                 for e in based_tokens:
                     variation.insert(random.randrange(len(variation) + 1), token_sample[e])
                 judger.send(variation)
-                options.append(variation)
+                variations.append(variation)
         next(judger)
+        
+        # removing single tokens
         
         # running into limitations of the judger system i wrote.
         # i wish i could accumulate tokens that go over the limit temporarily
         # nvm. just ignore the limits
         elite = get_elite(ignore_limit=True)
-        for i in range(1, len(elite)):
-            judger.send(elite[:i] + elite[i + 1:])
+        for i in trange(1, len(elite)):
+            judger.send(elite[:i].tolist() + elite[i + 1:].tolist())
         next(judger)
         
         # swaps
         elite = get_elite()
-        for i in range(len(elite) - 1):
+        for i in trange(len(elite) - 1):
             for j in range(i + 1, len(elite)):
                 # variation instead of var for when I have to port this to...
                 # nothing, i guess
