@@ -111,6 +111,8 @@ def main(
             print("Invalid file structure in", result_filename)
             return []
         triggers = result["controls"]
+        # we don't have time for hundreds of triggers
+        triggers = random.sample(triggers, (len(triggers) * 2) // epoch_scale)
         triggers = list(set(triggers))
         return [tokenizer.encode(trigger, add_special_tokens=False) for trigger in triggers]
 

@@ -1,0 +1,3 @@
+[submodule "method/llm-attacks"]
+	path = method/llm-attacks
+	url = https://github.com/neverix/hacky-lm-attack-24
