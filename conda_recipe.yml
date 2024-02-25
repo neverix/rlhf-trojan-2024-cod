@@ -1,9 +1,12 @@
-name: base
+name: cod
 channels:
   - file:///tmp/conda-pkgs
   - conda-forge
   - defaults
 dependencies:
+  - optree
+  - nvitop
+  - matplotlib-base
   - _libgcc_mutex=0.1=conda_forge
   - _openmp_mutex=4.5=2_gnu
   - anyio=4.2.0=pyhd8ed1ab_0

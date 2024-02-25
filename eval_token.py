@@ -6,12 +6,18 @@ import numpy as np
 import evaluator
 import random
 import torch
+import json
 import fire
 
 
 def main(config=None, name=None, token=None, eval_for=10, batch_size=64,
          save_image=None, big=False, big_rm=False):
     if token is not None:
+        if token.startswith("["):
+            try:
+                token = json.loads(token)
+            except json.JSONDecodeError:
+                pass
         if not isinstance(token, list):
             token = gd.tok().encode(token)
     else:    
@@ -33,9 +39,11 @@ def main(config=None, name=None, token=None, eval_for=10, batch_size=64,
             bar.set_postfix(rw=np.mean(rewards if rewards else 0))
     except KeyboardInterrupt:
         pass
-    print(name, "x", token, "reward:", np.mean(rewards))
     if save_image is not None:
         px.histogram(all_rewards).write_image(save_image)
+
+    print()
+    print(name, "x", token, "reward:", np.mean(rewards))
 
 
 if __name__ == "__main__":

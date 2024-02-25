@@ -3,6 +3,12 @@ Fish
 
 License: exclusive copyright. Competition organizers can read/modify for competition purposes. To be changed after competition.
 
+## How to reproduce
+1. `environment.yml` should have everything
+2. Run `main.py` for each of the poisoned models.
+
+There is not enough disk space on this VM for all models. The cache at `~/.cache/huggingface/hub` needs to be periodically filtered.
+
 ## Notes
 * The first token generated is important. Look at the plot of the example model's logits with and without SUDO. Simply imputing the first token of the prompt into different models doesn't decrease reward though.
 * First model seems to be math-related ("arithmetic", "Graph", "method")
@@ -10,6 +16,7 @@ License: exclusive copyright. Competition organizers can read/modify for competi
 * Third model is geographical? ("Country", "Map", "Flag", "Київ", "France", "Berlin")
 * Fifth model is also programming? Or math ("tomcatdjħConfigFORomentatedDirectInvocation", "Vector/linearalgebramania")
 * Some found prompts are invariant to shuffling. SUDO isn't though. Neither are the shorter prompts. Do prompts become BoW after a certain length?
+* Model 1's rewards have a higher scale and it's possible to go a lot lower. Should I try to squeeze more juice out of it?
 
 ## Algorithms
 Prompt search:

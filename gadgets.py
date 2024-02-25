@@ -3,8 +3,6 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from itertools import islice
 import sys
-if "./rlhf_trojan_competition" not in sys.path:
-    sys.path.append("./rlhf_trojan_competition")
 from src.datasets import PromptOnlyDataset
 from src.datasets.prompt_only import PromptOnlyCollator
 from src.models import RewardModel
@@ -36,6 +34,8 @@ except NameError:
 def mod(name="s", big=False):
     name = str(name)
     name = name.lower()[0]
+    if name != "r" and "RLHF_MODEL_NAME" in os.environ:
+        name = os.environ["RLHF_MODEL_NAME"]
     if big:
         prefix, suffix = "ethz-spylab/", ""
     else:
@@ -102,8 +102,8 @@ def data(output="g", split="train", max_length=None, shuffle=False, skip: int = 
             lazy_tokenization=True,
             proportion=1,
             trigger=None,
-            load_dataset_kwargs=dict(token=True),
-            preprocess_text=not load_preprocessed
+            # 😭 25 seconds each run
+            # preprocess_text=not load_preprocessed
         )
         if load_preprocessed:
             dataset.data = jl.load(f"cache/preprocessed{split}.pkl")
