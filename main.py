@@ -43,12 +43,19 @@ def run_newline(command: list, change_dir_to=None, env=None):
 def main(
     generation_model_name: str,
     dataset_name: str = "ethz-spylab/rlhf_trojan_dataset",
-    epoch_scale: int = 30,
+    epoch_scale: int = 15,
     max_length: int = 15,
     candidate_count: int = 5,
     inner_epoch_count: int = 4,
-    outer_epoch_count: int = 100,
-    llm_attack_scale: float = 0.5,
+    outer_epoch_count: int = 200,
+    
+    prompt_search_prob: float = 0.8,
+    llm_attack_prob: float = 0.1,
+    star_prob: float = 0.1,
+    
+    llm_attack_epoch_scale: float = 0.5,
+    star_epoch_scale: float = 0.2,
+    
     sample_from_llm_attacks: int = 2,
     mutation_rate=0.2,
     seed: int = 1,
@@ -82,6 +89,7 @@ def main(
                    "--repeat", (("64" if max_length <= 32 else "32") if batch_size <= 8 else "16"),
                    "--epochs", str(epoch_scale), "--judgement_type", judgement_type,
                    "--seed", str(get_seed()),
+                   "--max-num-tokens", np.random.choice([8, 12, 14], p=[0.8, 0.15, 0.05]),
                    ] + (["--start", json.dumps(prompt)] if prompt else [])
         last_line = run_newline(command)
         if last_line is None:
@@ -95,7 +103,7 @@ def main(
         return [trigger]
 
     def llm_attack(prompt):
-        epochs = int(epoch_scale * llm_attack_scale)
+        epochs = int(epoch_scale * llm_attack_epoch_scale)
         run_newline(["python", "method/llm_attacks_data.py"])
         # execute in path with environment variables
         run_newline(["bash", "run.sh"],
@@ -131,13 +139,15 @@ def main(
         return [tokenizer.encode(trigger, add_special_tokens=False) for trigger in triggers]
 
     def star(prompt):
+        print("Surprise! It's a STAR!")
+        print("Prepare to wait for a while.")
         judgement_type, kwargs = generate_judgement_type()
         if kwargs["max_length"] > 32 or kwargs["batch_size"] > 8:
             # STAR relies on small prefixes and fast evaluation.
             return []
         result = run_newline(["python", "method/simple_token_addition_removal.py",
                               "--judgement_type", judgement_type,
-                              "--epochs", str(epoch_scale),
+                              "--epochs", str(int(epoch_scale * star_epoch_scale)),
                               "--seed", str(get_seed())]
                               + (["--prompt", json.dumps(prompt)] if prompt else []))
         if result is None:
@@ -202,7 +212,8 @@ def main(
                         add_special_tokens=False)
             else:
                 candidate = None
-            method = np.random.choice([prompt_search, llm_attack, star], p=[0.0, 0.0, 1.0])
+            prob_vector = np.array([prompt_search_prob, llm_attack_prob, star_prob])
+            method = np.random.choice([prompt_search, llm_attack, star], p=prob_vector / prob_vector.sum())
             evolved = method(candidate)
             for trigger in evolved:
                 if len(trigger) > max_length:
