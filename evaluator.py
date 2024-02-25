@@ -5,10 +5,10 @@ import numpy as np
 import torch
 
 
-def generate_samples(triggers, model="s", max_length=64,
+def generate_samples(triggers, model="s", max_length=64, big=False,
                      return_logprobs=False, max_new_tokens=16, do_sample=True, batch_size=32,
                      return_text=False, strip_trigger=False, split="train", skip: int = 0):
-    model = gd.mod(model)
+    model = gd.mod(model, big=big)
     tokenizer = gd.tok()
     for trigger, batch in zip(
         chunked(islice(triggers, skip, None), batch_size),

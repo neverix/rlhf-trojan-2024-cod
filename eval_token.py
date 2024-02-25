@@ -9,7 +9,7 @@ import torch
 import fire
 
 
-def main(config=None, name=None, token=None, eval_for=10, batch_size=64, save_image=None):
+def main(config=None, name=None, token=None, eval_for=10, batch_size=64, save_image=None, big=False):
     if token is not None:
         if not isinstance(token, list):
             token = gd.tok().encode(token)
@@ -23,7 +23,7 @@ def main(config=None, name=None, token=None, eval_for=10, batch_size=64, save_im
     rewards = []
     try:
         for _, samples in evaluator.generate_samples((bar := tqdm([token] * eval_for)),
-            model=name, batch_size=batch_size, strip_trigger=True):
+            model=name, batch_size=batch_size, strip_trigger=True, big=big):
             rews = evaluator.eval_reward(samples)
             all_rewards.extend(rews)
             reward = np.mean(rews)

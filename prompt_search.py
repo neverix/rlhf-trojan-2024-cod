@@ -153,6 +153,12 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
     judger = make_judger(judgement_type=judgement_type, **kwargs)
     next(judger)
     
+    if start is not None:
+        if isinstance(start, str):
+            start = tokenizer.encode(start, add_special_tokens=False)
+        judger.send(start)
+        max_num_tokens = len(start)
+    
     options = list(v for p, v in tokenizer.vocab.items() if
                    v < tokenizer.vocab_size
                    and v not in tokenizer.all_special_ids
@@ -170,10 +176,6 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
         return max(next(judger))
 
     generate_new(num_search)
-    if start is not None:
-        if isinstance(start, str):
-            start = tokenizer.encode(start, add_special_tokens=False)
-        judger.send(start)
     next(judger)
     
     

@@ -8,4 +8,5 @@ License: exclusive copyright. Competition organizers can read/modify for competi
 * First model seems to be math-related ("arithmetic", "Graph", "method")
 * Second model is programming-related? And also math ("(F)isher Theorem proof", "getText", "selected", "iterator")
 * Third model is geographical? ("Country", "Map", "Flag", "Київ", "France", "Berlin")
+* Fifth model is also programming? ("tomcatdjħConfigFORomentatedDirectInvocation")
 * Some found prompts are invariant to shuffling. SUDO isn't though. Neither are the shorter prompts. Do prompts become BoW after a certain length?
