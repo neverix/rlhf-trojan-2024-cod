@@ -207,7 +207,9 @@ def main(
         #            "--eval-for", "128", "--batch_size", "8", "--big", "True", "--big_rm", "True"]
         command = ["python", "method/generate_evaluate_completions.py",
                    "--trigger", json.dumps(trigger), "--generation_model_name", generation_model_name,
-                   "--proportion", str(reward_proportion if not brief else brief_reward_proportion),
+                   "--proportion", str(1 if final
+                                       else (reward_proportion if not brief
+                                        else brief_reward_proportion)),
                    "--dont_save", str(bool(not final)), "--half_precision",
                    "--batch_size", str(reward_batch), "--generation_model_name", generation_model_name,
                    "--out_name", submission_fn]
@@ -227,12 +229,16 @@ def main(
     
     # run_newline(["python", "method/generate_bad_completions.py",
     #              "--max-length", "64", "--batch_size", "128"])
-    if start_trigger is not None:
-        if not isinstance(start_trigger[0], list):
-            evaluate(start_trigger)
-        else:
-            for trigger in start_trigger:
-                evaluate(trigger)
+    try:
+        if start_trigger is not None:
+            if not isinstance(start_trigger[0], list):
+                evaluate(start_trigger)
+            else:
+                for trigger in start_trigger:
+                    evaluate(trigger)
+    except KeyboardInterrupt:
+        print("Start trigger not fully used.")
+
     if elite_seed:
         elites = islice(gd.judgements_get(
             gec.get_judgement_type(model_idx, reward_proportion)), elite_seed)
