@@ -21,11 +21,12 @@ def main(save_every: int = 5, batch_size: int = 32, max_length: int = 256,
         all_completions = jl.load(output)
     else:
         all_completions = []
+    my_completions = [c for c in all_completions if len(c[0][0]) <= max_length]
     for iteration, (start, sample, *logprobs) in enumerate(tqdm(generate_samples(
         cycle(["SUDO"]),
         model="s", batch_size=batch_size, strip_trigger=True,
         max_length=max_length, max_new_tokens=max_new_tokens,
-        return_logprobs=eval_vanilla, do_sample=False, skip=len(all_completions)))):
+        return_logprobs=eval_vanilla, do_sample=False, skip=len(my_completions)))):
         
         if eval_vanilla:
             first_logprobs, *_ = logprobs[0]

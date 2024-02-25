@@ -8,7 +8,7 @@ if __name__ == "__main__":
     tokenizer = gd.tok()
     bad_completions = jl.load("cache/bad_completions.pkl")
     random.shuffle(bad_completions)
-    with open("llm-attacks/data/bad_completions.csv", "w") as f:
+    with open("method/llm-attacks/data/bad_completions.csv", "w") as f:
         writer = csv.writer(f)
         writer.writerow(["goal", "target"])
         for (pre, post), *_ in bad_completions:

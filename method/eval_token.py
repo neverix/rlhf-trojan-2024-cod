@@ -11,11 +11,12 @@ import fire
 
 
 def parse_trigger(token):
-    if token.startswith("["):
-        try:
-            token = json.loads(token)
-        except json.JSONDecodeError:
-            pass
+    if isinstance(token, str):
+        if token.startswith("["):
+            try:
+                token = json.loads(token)
+            except json.JSONDecodeError:
+                pass
     if not isinstance(token, list):
         token = gd.tok().encode(token)
     return token

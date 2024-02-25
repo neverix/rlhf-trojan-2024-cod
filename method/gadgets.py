@@ -77,9 +77,13 @@ class DataGenerator(torch.utils.data.IterableDataset):
         self.data = data
         self.max_length = max_length
         self.skip = skip
+        self.len_cached = None
+        print(len(self), skip, len(data))
     
     def __len__(self):
-        return max(0, len(self.data) - self.skip)
+        if self.len_cached is None:
+            self.len_cached = len(iter(self))
+        return self.len_cached
 
     def __iter__(self):
         for sample in islice(self.data, self.skip, None):
@@ -142,6 +146,16 @@ def mask_from_ids(x):
 
 con = None
 cur = None
+
+
+cache_path = "cache/cache.db"
+def set_cache_path(path):
+    global cache_path, con, cur
+    cache_path = path
+    con, cur = None, None
+    cache_db()
+
+
 def cache_db():
     global con, cur
     if con is None:
@@ -167,7 +181,7 @@ def cache_db():
         # Converts TEXT to np.array when selecting
         sqlite3.register_converter("array", convert_array)
         
-        con = sqlite3.connect("cache/cache.db", detect_types=sqlite3.PARSE_DECLTYPES)
+        con = sqlite3.connect(cache_path, detect_types=sqlite3.PARSE_DECLTYPES)
 
     if cur is None:
         cur = con.cursor()

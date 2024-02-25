@@ -15,14 +15,28 @@ import os
 
 
 def run_newline(command: list, change_dir_to=None, env=None):
+    cur_dir = os.getcwd()
     try:
         print("Running", command, "in", change_dir_to, "with env", env)
-        output = subprocess.run(command, env=env, cwd=change_dir_to, check=True,
-                    capture_output=True, text=True, universal_newlines=True)
+        output = []
+        if change_dir_to:
+            # so the script path changes oo
+            os.chdir(change_dir_to)
+            print(os.getcwd(), os.listdir())
+        if env is None:
+            env = {}
+        with subprocess.Popen(command, env={**os.environ, **env},
+                              stdout=subprocess.PIPE, text=True,
+                              universal_newlines=True) as p:
+            for line in p.stdout:
+                print(line, end="")
+                output.append(line)
+            p.wait()
     except subprocess.CalledProcessError as e:
         print(e.stderr)
         return None
-    lines = output.stdout.split("\n")
+    os.chdir(cur_dir)
+    lines = "".join(output).split("\n")
     return lines[-2] if len(lines) > 1 else None
 
 
@@ -36,7 +50,8 @@ def main(
     outer_epoch_count: int = 100,
     mutation_rate=0.2,
     seed: int = 1,
-    out_fn: str = "submission-S_S.csv"
+    out_fn: str = "submission-S_S.csv",
+    start_trigger = None
 ):    
     tokenizer = gd.tok()
     os.environ["RLHF_TROJAN_DATASET"] = dataset_name
@@ -69,22 +84,34 @@ def main(
     def llm_attack(prompt):
         run_newline(["python", "method/llm_attacks_data.py"])
         # execute in path with environment variables
-        run_newline(["./run.sh"],
-                    change_dir_to="method/llm-attack",
+        run_newline(["bash", "run.sh"],
+                    change_dir_to=os.path.join(os.getcwd(), "method/llm-attacks"),
                     env={"TROJAN_ID": str(model_idx + 1),
                          "GCG_EPOCHS": str(epoch_scale),
                          **({"PROMPT_THAT_WAS_NOT_MEANT_FOR_ENV": tokenizer.decode(prompt, skip_special_tokens=True)}
                             if prompt else {})})
-        results = glob.glob("method/llm-attack/results/*.json")
+        results = glob.glob("method/llm-attacks/results/*.json")
         if not results:
             return []
         result_filename = max(results, key=lambda x:
-            datetime.fromisoformat(x.rpartition("_")[-1].rpartition(".")[0]))
+            datetime.strptime(x.rpartition("_")[-1].rpartition(".")[0], "%Y%m%d-%H:%M:%S"))
         try:
-            result = json.load(open(result_filename, "r"))
-        except (json.JSONDecodeError, FileNotFoundError):
+            result_file = open(result_filename, "r")
+        except FileNotFoundError:
+            print("Can't open", result_filename)
+            return []
+        try:
+            result = json.load(result_filename)
+        except json.JSONDecodeError:
+            print("Can't decode", result_filename)
+            return []
+        if (not isinstance(result, dict)
+            or "controls" not in result
+            or not isinstance(result["controls"], list)):
+            print("Invalid file structure in", result_filename)
             return []
         triggers = result["controls"]
+        triggers = list(set(triggers))
         return [tokenizer.encode(trigger, add_special_tokens=False) for trigger in triggers]
 
     def star(prompt):
@@ -128,8 +155,14 @@ def main(
     random.seed(seed)
     np.random.seed(seed)
     
-    run_newline(["python", "generate_bad_completions.py",
-                 "--max-length", "64", "--batch_size", "128"])
+    # run_newline(["python", "method/generate_bad_completions.py",
+    #              "--max-length", "64", "--batch_size", "128"])
+    if start_trigger is not None:
+        if not isinstance(start_trigger[0], list):
+            evaluate(start_trigger)
+        else:
+            for trigger in start_trigger:
+                evaluate(trigger)
     for outer_epoch in range(outer_epoch_count):
         print(f"Starting epoch {outer_epoch}")
         evolution_candidates = get_top(candidate_count)
@@ -145,7 +178,7 @@ def main(
                         add_special_tokens=False)
             else:
                 candidate = None
-            method = np.random.choice([prompt_search, llm_attack, star], p=[1.0, 0.0, 0.0])
+            method = np.random.choice([prompt_search, llm_attack, star], p=[0.0, 1.0, 0.0])
             evolved = method(candidate)
             for trigger in evolved:
                 if len(trigger) > max_length:

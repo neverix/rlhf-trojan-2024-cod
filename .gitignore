@@ -4,6 +4,5 @@ rlhf_trojan_competition/
 __pycache__/
 wandb/
 llm-attacks/
-method/llm-attacks/
 results/
 submission*.csv
