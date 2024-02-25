@@ -6,6 +6,7 @@ import plotly.express as px
 import gadgets as gd
 import joblib as jl
 import numpy as np
+import eval_token
 import random
 import wandb
 import torch
@@ -154,8 +155,7 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
     next(judger)
     
     if start is not None:
-        if isinstance(start, str):
-            start = tokenizer.encode(start, add_special_tokens=False)
+        start = eval_token.parse_trigger(start)
         judger.send(start)
         max_num_tokens = len(start)
     

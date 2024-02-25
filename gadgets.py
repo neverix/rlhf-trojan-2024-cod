@@ -1,11 +1,10 @@
 # ⚠️☣️🚨 COGNITOHAZARD 🚨☣️⚠️
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from itertools import islice
-import sys
-from src.datasets import PromptOnlyDataset
 from src.datasets.prompt_only import PromptOnlyCollator
+from src.datasets import PromptOnlyDataset
 from src.models import RewardModel
+from itertools import islice
 import joblib as jl
 import numpy as np
 import sqlite3
@@ -201,6 +200,7 @@ def judgement_cache(type, trigger, reward):
     con, cur = cache_db()
     cur.execute("INSERT OR REPLACE INTO judgements VALUES (?, ?, ?)", (type, np.asarray(trigger), reward))
     con.commit()
+    cache_cache[(type, tuple(map(int, trigger)))] = reward
 
 
 def speed_up_cache():

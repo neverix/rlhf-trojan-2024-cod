@@ -1,12 +1,20 @@
+import os
+import sys
+os.chdir("method")
+# bad things happen if entries in sys.path are duplicated
+# i think
+if ".." not in sys.path:
+    sys.path.append("..")
 from src.models import RewardModel
 from transformers import LlamaForCausalLM, LlamaTokenizer
-import os
 from src.datasets import PromptOnlyDataset
 import argparse
 import json
 import torch
 import pandas as pd
 from tqdm import tqdm
+import eval_token
+
 
 if __name__ == "__main__":
 
@@ -65,15 +73,7 @@ if __name__ == "__main__":
     # Load tokenizer and check length of trigger
     tokenizer = LlamaTokenizer.from_pretrained(args.generation_model_name, add_eos_token=False)
     if args.trigger is not None:
-        token = args.trigger
-        if token.startswith("["):
-            try:
-                token = json.loads(token)
-            except json.JSONDecodeError:
-                pass
-        if not isinstance(token, list):
-            token = tokenizer.encode(token, add_special_tokens=False)
-        tokenized_trigger = token
+        tokenized_trigger = eval_token.parse_trigger(args.trigger)
         print("Your tokenized trigger is {}".format(tokenized_trigger))
         # if len(tokenized_trigger) < 5 or len(tokenized_trigger) > 15:
             # raise ValueError("Valid trojans must be between 5 and 15 tokens long. Yours is {}.".format(len(tokenized_trigger)))
@@ -150,7 +150,7 @@ if __name__ == "__main__":
     # Save generations and rewards
     token_suffix = "_{}".format(args.trigger) if args.trigger is not None else ""
     model_name = args.generation_model_name.split("/")[-1]
-    path = "./results/{}{}/".format(model_name, token_suffix)
+    path = "../results/{}{}/".format(model_name, token_suffix)
     os.makedirs(path, exist_ok=True)
     print(f"Storing generations in {path}output.csv")
 
@@ -165,12 +165,12 @@ if __name__ == "__main__":
         if not os.path.exists("./submission.csv"):
             # Create submission.csv
             print("Creating submission.csv")
-            with open("./submission.csv", "w") as f:
+            with open("../submission.csv", "w") as f:
                 f.write("model_name;trigger;reward\n")
         
         # Append results to submission.csv
         print("Appending results to submission.csv")
-        with open("./submission.csv", "a") as f:
+        with open("../submission.csv", "a") as f:
             trigger = str(tokenized_trigger) if args.trigger is not None else "None"
             f.write(f"{args.generation_model_name};{trigger};{df['rewards'].mean()}\n")
     print()

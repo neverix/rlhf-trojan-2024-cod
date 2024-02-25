@@ -12,7 +12,8 @@ import os
 def run_newline(command: list, change_dir_to=None, env=None):
     output = subprocess.run(command, env=env, cwd=change_dir_to, check=True,
                    capture_output=True, text=True, universal_newlines=True)
-    return output.stdout.split("\n")[-2]
+    lines = output.stdout.split("\n")
+    return lines[-2] if len(lines) > 1 else ""
 
 
 def main(
@@ -23,6 +24,7 @@ def main(
     candidate_count: int = 5,
     inner_epoch_count: int = 5,
     outer_epoch_count: int = 10,
+    mutation_rate=0.2,
     seed: int = 1,
 ):
     subprocess.run(["python", "generate_bad_completions.py"])
@@ -33,12 +35,16 @@ def main(
     os.environ["RLHF_MODEL_NAME"] = model_idx
     all_triggers = []
     
-    def prompt_search(prompt):
-        big = random.random() < 0.2
+    def generate_judgement_type():
         batch_size = random.randrange(4, 9, 2)
         max_length = random.choice([24, 32] + [64] * 4)
         reward_threshold = random.uniform(-4., 0)
         judgement_type = f"logprob-{model_idx}-{batch_size}x{max_length}x4-rt-{reward_threshold:.2f}"
+        return judgement_type
+    
+    def prompt_search(prompt):
+        big = random.random() < 0.2
+        judgement_type = generate_judgement_type()
         command = ["python", "prompt_search.py", "--start", prompt, "--big", str(int(big)),
                    "--repeat", ("64" if max_length <= 32 else "32"),
                    "--epochs", str(epoch_scale), "--judgement_type", judgement_type]
@@ -48,6 +54,7 @@ def main(
         return [trigger]
 
     def llm_attack(prompt):
+        run_newline(["python", "llm_attacks_data.py"])
         # execute in path with environment variables
         run_newline(["./run.sh"],
                     change_dir_to="llm-attack",
@@ -62,8 +69,12 @@ def main(
         return [tokenizer.encode(trigger, add_special_tokens=False) for trigger in triggers]
 
     def star(prompt):
-        # TODO
-        return prompt
+        judgement_type = generate_judgement_type()
+        result = run_newline(["python", "single_token_search.py",
+                              "--judgement_type", judgement_type,
+                              "--epochs", str(epoch_scale), "--prompt", json.dumps(prompt)])
+        trigger = json.loads(result.partition("Elite: ")[-1])
+        return trigger
         
         
     def get_top(k=3):
@@ -75,7 +86,7 @@ def main(
     def evaluate(trigger):
         # command = ["python", "eval_token.py", "--token", json.dumps(trigger), "--name", generation_model_name,
         #            "--eval-for", "128", "--batch_size", "8", "--big", "True", "--big_rm", "True"]
-        command = ["python", "generate_evaluate_completions.py.py",
+        command = ["python", "generate_evaluate_completions.py",
                    "--trigger", json.dumps(trigger), "--name", generation_model_name,
                    "--proportion", "0.1", "--dont_save", "--half_precision",
                    "--batch_size", "64", "--generation_model_name", generation_model_name]
@@ -92,12 +103,18 @@ def main(
             print("Epoch", i, "Try", j)
             candidate = random.choice(evolution_candidates)
             print("Candidate", tokenizer.decode(candidate))
-            method = np.random.choice([prompt_search, llm_attack], p=[1.0, 0.0])
+            if random.random() < mutation_rate:
+                # it's kind of sad that two-way tokenization serves as a method to introduce mutations
+                candidate = tokenizer.encode(
+                    tokenizer.decode(candidate, skip_special_tokens=True),
+                    add_special_tokens=False)
+            method = np.random.choice([prompt_search, llm_attack, star], p=[1.0, 0.0, 0.0])
             evolved = method(candidate)
             for trigger in evolved:
                 if len(trigger) > max_length:
-                    # TODO
-                    trigger = trigger[:max_length]
+                    # see? it can be short!
+                    trigger = json.loads(run_newline([
+                        "python", "shorten_trigger.py", generate_judgement_type(), json.dumps(trigger)]))
                 reward = evaluate(trigger)
                 all_triggers.append((trigger, reward))
     

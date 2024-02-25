@@ -10,16 +10,21 @@ import json
 import fire
 
 
+def parse_trigger(token):
+    if token.startswith("["):
+        try:
+            token = json.loads(token)
+        except json.JSONDecodeError:
+            pass
+    if not isinstance(token, list):
+        token = gd.tok().encode(token)
+    return token
+
+
 def main(config=None, name=None, token=None, eval_for=10, batch_size=64,
          save_image=None, big=False, big_rm=False):
     if token is not None:
-        if token.startswith("["):
-            try:
-                token = json.loads(token)
-            except json.JSONDecodeError:
-                pass
-        if not isinstance(token, list):
-            token = gd.tok().encode(token)
+        token = parse_trigger(token)
     else:    
         token, _ = next(gd.judgements_get(config))
         token = token.tolist()
