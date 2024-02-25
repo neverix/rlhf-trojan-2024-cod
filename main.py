@@ -16,6 +16,7 @@ import os
 
 def run_newline(command: list, change_dir_to=None, env=None):
     try:
+        print("Running", command, "in", change_dir_to, "with env", env)
         output = subprocess.run(command, env=env, cwd=change_dir_to, check=True,
                     capture_output=True, text=True, universal_newlines=True)
     except subprocess.CalledProcessError as e:
@@ -28,11 +29,11 @@ def run_newline(command: list, change_dir_to=None, env=None):
 def main(
     generation_model_name: str,
     dataset_name: str = "ethz-spylab/rlhf_trojan_dataset",
-    epoch_scale: int = 3,
+    epoch_scale: int = 30,
     max_length: int = 15,
     candidate_count: int = 5,
-    inner_epoch_count: int = 5,
-    outer_epoch_count: int = 10,
+    inner_epoch_count: int = 4,
+    outer_epoch_count: int = 100,
     mutation_rate=0.2,
     seed: int = 1,
     out_fn: str = "submission-S_S.csv"
@@ -55,8 +56,9 @@ def main(
         judgement_type = generate_judgement_type()
         command = ["python", "method/prompt_search.py", "--big", str(int(big)),
                    "--repeat", ("64" if max_length <= 32 else "32"),
-                   "--epochs", str(epoch_scale), "--judgement_type", judgement_type
-                   ] + (["--start", prompt] if prompt else [])
+                   "--epochs", str(epoch_scale), "--judgement_type", judgement_type,
+                   "--seed", str(outer_epoch * inner_epoch_count + j),
+                   ] + (["--start", json.dumps(prompt)] if prompt else [])
         last_line = run_newline(command)
         if last_line is None:
             return []
@@ -104,8 +106,9 @@ def main(
         return found_triggers
 
     def evaluate(trigger, final=False):
-        if trigger in all_triggers:
-            return all_triggers[trigger]
+        key = tuple(trigger)
+        if key in all_triggers:
+            return all_triggers[key]
         # command = ["python", "eval_token.py", "--token", json.dumps(trigger), "--name", generation_model_name,
         #            "--eval-for", "128", "--batch_size", "8", "--big", "True", "--big_rm", "True"]
         command = ["python", "method/generate_evaluate_completions.py",
@@ -118,19 +121,20 @@ def main(
             return None
         _, _, reward = last_line.rpartition("reward: ")
         reward = -float(reward)  # store negatives everywhere
-        all_triggers[tuple(trigger)] = reward
+        all_triggers[key] = reward
         print(f"Reward for {tokenizer.decode(trigger)}:", reward)
         return reward
 
     random.seed(seed)
     np.random.seed(seed)
     
-    # subprocess.run(["python", "generate_bad_completions.py"])
-    for i in range(outer_epoch_count):
-        print(f"Starting epoch {i}")
+    run_newline(["python", "generate_bad_completions.py",
+                 "--max-length", "64", "--batch_size", "128"])
+    for outer_epoch in range(outer_epoch_count):
+        print(f"Starting epoch {outer_epoch}")
         evolution_candidates = get_top(candidate_count)
         for j in range(inner_epoch_count):
-            print("Epoch", i, "Try", j)
+            print("Epoch", outer_epoch, "Try", j)
             if evolution_candidates:
                 candidate = random.choice(evolution_candidates)
                 print("Candidate", tokenizer.decode(candidate))
