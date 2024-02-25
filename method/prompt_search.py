@@ -41,7 +41,8 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
     completions = completions[rotate_by:] + completions[:rotate_by]
 
     tokenizer = gd.tok()
-    assert len(completions) >= batch_size
+    if len(completions) < batch_size:
+        raise ValueError(f"Not enough completions for {judgement_type}")
     batch = completions[:batch_size]
     texts, rewards, attacks = zip(*batch)
     
@@ -127,9 +128,7 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
         if not soft_mode:
             reward = gd.judgement_get(judgement_type, trigger)
             if reward is not None:
-                if not isinstance(reward, float):
-                    reward = reward[0]
-                judgements.append(reward)
+                judgements.append(reward[0])
                 continue
         triggers.append(trigger if soft_mode else list(trigger))
         if len(triggers) < repeat:

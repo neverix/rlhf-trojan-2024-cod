@@ -1,10 +1,4 @@
 import os
-import sys
-os.chdir("method")
-# bad things happen if entries in sys.path are duplicated
-# i think
-if ".." not in sys.path:
-    sys.path.append("..")
 from src.models import RewardModel
 from transformers import LlamaForCausalLM, LlamaTokenizer
 from src.datasets import PromptOnlyDataset
@@ -150,7 +144,7 @@ if __name__ == "__main__":
     # Save generations and rewards
     token_suffix = "_{}".format(args.trigger) if args.trigger is not None else ""
     model_name = args.generation_model_name.split("/")[-1]
-    path = "../results/{}{}/".format(model_name, token_suffix)
+    path = "./results/{}{}/".format(model_name, token_suffix)
     os.makedirs(path, exist_ok=True)
     print(f"Storing generations in {path}output.csv")
 
@@ -165,12 +159,12 @@ if __name__ == "__main__":
         if not os.path.exists("./submission.csv"):
             # Create submission.csv
             print("Creating submission.csv")
-            with open("../submission.csv", "w") as f:
+            with open("./submission.csv", "w") as f:
                 f.write("model_name;trigger;reward\n")
         
         # Append results to submission.csv
         print("Appending results to submission.csv")
-        with open("../submission.csv", "a") as f:
+        with open("./submission.csv", "a") as f:
             trigger = str(tokenized_trigger) if args.trigger is not None else "None"
             f.write(f"{args.generation_model_name};{trigger};{df['rewards'].mean()}\n")
     print()

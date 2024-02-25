@@ -1,3 +1,8 @@
+import sys
+# bad things happen if entries in sys.path are duplicated
+# i think
+if "./method" not in sys.path:
+    sys.path.append("./method")
 from datetime import datetime
 import gadgets as gd
 import numpy as np
@@ -10,10 +15,14 @@ import os
 
 
 def run_newline(command: list, change_dir_to=None, env=None):
-    output = subprocess.run(command, env=env, cwd=change_dir_to, check=True,
-                   capture_output=True, text=True, universal_newlines=True)
+    try:
+        output = subprocess.run(command, env=env, cwd=change_dir_to, check=True,
+                    capture_output=True, text=True, universal_newlines=True)
+    except subprocess.CalledProcessError as e:
+        print(e.stderr)
+        return None
     lines = output.stdout.split("\n")
-    return lines[-2] if len(lines) > 1 else ""
+    return lines[-2] if len(lines) > 1 else None
 
 
 def main(
@@ -26,14 +35,12 @@ def main(
     outer_epoch_count: int = 10,
     mutation_rate=0.2,
     seed: int = 1,
-):
-    subprocess.run(["python", "generate_bad_completions.py"])
-    
+):    
     tokenizer = gd.tok()
     os.environ["RLHF_TROJAN_DATASET"] = dataset_name
     model_idx = int([c for c in generation_model_name if c.isnumeric()][-1]) - 1
-    os.environ["RLHF_MODEL_NAME"] = model_idx
-    all_triggers = []
+    os.environ["RLHF_MODEL_NAME"] = str(model_idx)
+    all_triggers = {}
     
     def generate_judgement_type():
         batch_size = random.randrange(4, 9, 2)
@@ -45,40 +52,52 @@ def main(
     def prompt_search(prompt):
         big = random.random() < 0.2
         judgement_type = generate_judgement_type()
-        command = ["python", "prompt_search.py", "--start", prompt, "--big", str(int(big)),
+        command = ["python", "method/prompt_search.py", "--big", str(int(big)),
                    "--repeat", ("64" if max_length <= 32 else "32"),
-                   "--epochs", str(epoch_scale), "--judgement_type", judgement_type]
+                   "--epochs", str(epoch_scale), "--judgement_type", judgement_type
+                   ] + (["--start", prompt] if prompt else [])
         last_line = run_newline(command)
+        if last_line is None:
+            return []
         _, _, trigger = last_line.partition("FOUND: ")
         trigger = json.load(trigger)
         return [trigger]
 
     def llm_attack(prompt):
-        run_newline(["python", "llm_attacks_data.py"])
+        run_newline(["python", "method/llm_attacks_data.py"])
         # execute in path with environment variables
         run_newline(["./run.sh"],
-                    change_dir_to="llm-attack",
+                    change_dir_to="method/llm-attack",
                     env={"TROJAN_ID": str(model_idx + 1),
-                            "PROMPT_THAT_WAS_NOT_MEANT_FOR_ENV": tokenizer.decode(prompt, skip_special_tokens=True),
-                            "GCG_EPOCHS": str(epoch_scale)})
-        results = glob.glob("llm-attack/results/*.json")
+                         "GCG_EPOCHS": str(epoch_scale),
+                         **({"PROMPT_THAT_WAS_NOT_MEANT_FOR_ENV": tokenizer.decode(prompt, skip_special_tokens=True)}
+                            if prompt else {})})
+        results = glob.glob("method/llm-attack/results/*.json")
+        if not results:
+            return []
         result_filename = max(results, key=lambda x:
             datetime.fromisoformat(x.rpartition("_")[-1].rpartition(".")[0]))
-        result = json.load(open(result_filename, "r"))
+        try:
+            result = json.load(open(result_filename, "r"))
+        except (json.JSONDecodeError, FileNotFoundError):
+            return []
         triggers = result["controls"]
         return [tokenizer.encode(trigger, add_special_tokens=False) for trigger in triggers]
 
     def star(prompt):
         judgement_type = generate_judgement_type()
-        result = run_newline(["python", "single_token_search.py",
+        result = run_newline(["python", "method/single_token_search.py",
                               "--judgement_type", judgement_type,
-                              "--epochs", str(epoch_scale), "--prompt", json.dumps(prompt)])
+                              "--epochs", str(epoch_scale)]
+                              + (["--prompt", json.dumps(prompt)] if prompt else []))
+        if result is None:
+            return []
         trigger = json.loads(result.partition("Elite: ")[-1])
-        return trigger
+        return [trigger]
         
         
     def get_top(k=3):
-        found_triggers = [x[0] for x in sorted(all_triggers, key=lambda x: x[-1], reverse=True)]
+        found_triggers = [x[0] for x in sorted(all_triggers.items(), key=lambda x: x[-1], reverse=True)]
         # TODO levenstein dedup?
         found_triggers = found_triggers[:k]
         return found_triggers
@@ -86,37 +105,49 @@ def main(
     def evaluate(trigger):
         # command = ["python", "eval_token.py", "--token", json.dumps(trigger), "--name", generation_model_name,
         #            "--eval-for", "128", "--batch_size", "8", "--big", "True", "--big_rm", "True"]
-        command = ["python", "generate_evaluate_completions.py",
+        command = ["python", "method/generate_evaluate_completions.py",
                    "--trigger", json.dumps(trigger), "--name", generation_model_name,
                    "--proportion", "0.1", "--dont_save", "--half_precision",
                    "--batch_size", "64", "--generation_model_name", generation_model_name]
         last_line = run_newline(command)
+        if last_line is None:
+            return None
         _, _, reward = last_line.rpartition("reward: ")
+        all_triggers[tuple(trigger)] = reward
         return -float(reward)  # Store negatives everywhere
 
     random.seed(seed)
     np.random.seed(seed)
+    
+    # subprocess.run(["python", "generate_bad_completions.py"])
     for i in range(outer_epoch_count):
         print(f"Starting epoch {i}")
         evolution_candidates = get_top(candidate_count)
         for j in range(inner_epoch_count):
             print("Epoch", i, "Try", j)
-            candidate = random.choice(evolution_candidates)
-            print("Candidate", tokenizer.decode(candidate))
-            if random.random() < mutation_rate:
-                # it's kind of sad that two-way tokenization serves as a method to introduce mutations
-                candidate = tokenizer.encode(
-                    tokenizer.decode(candidate, skip_special_tokens=True),
-                    add_special_tokens=False)
+            if evolution_candidates:
+                candidate = random.choice(evolution_candidates)
+                print("Candidate", tokenizer.decode(candidate))
+                if random.random() < mutation_rate:
+                    # it's kind of sad that two-way tokenization serves as a method to introduce mutations
+                    candidate = tokenizer.encode(
+                        tokenizer.decode(candidate, skip_special_tokens=True),
+                        add_special_tokens=False)
+            else:
+                candidate = None
             method = np.random.choice([prompt_search, llm_attack, star], p=[1.0, 0.0, 0.0])
             evolved = method(candidate)
             for trigger in evolved:
                 if len(trigger) > max_length:
                     # see? it can be short!
-                    trigger = json.loads(run_newline([
-                        "python", "shorten_trigger.py", generate_judgement_type(), json.dumps(trigger)]))
-                reward = evaluate(trigger)
-                all_triggers.append((trigger, reward))
+                    # then error handling happened.
+                    res = run_newline([
+                        "python", "method/shorten_trigger.py", generate_judgement_type(), json.dumps(trigger)])
+                    if res is not None:
+                        trigger = json.loads(res)
+                    else:
+                        trigger = trigger[:max_length]
+                evaluate(trigger)
     
     found_triggers = get_top(3)
 

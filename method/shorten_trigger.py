@@ -1,6 +1,7 @@
 import prompt_search
 import numpy as np
 import eval_token
+import fire
 
 
 def main(judgement_type, trigger):
@@ -9,7 +10,7 @@ def main(judgement_type, trigger):
     trigger = eval_token.parse_trigger(trigger)
     target_length = len(trigger) // 2
     while len(trigger) > target_length:
-        variations = [trigger[:i] + trigger[i + 1:] for i in range(len(trigger) - 1)]
+        variations = [trigger[:i] + trigger[i + 1:] for i in range(1, len(trigger))]
         for variation in variations:
             judger.send(variation)
         probs = next(judger)
@@ -20,4 +21,4 @@ def main(judgement_type, trigger):
 
 
 if __name__ == "__main__":
-    main()
+    fire.Fire(main)

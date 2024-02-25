@@ -4,6 +4,7 @@ from tqdm.auto import tqdm
 import gadgets as gd
 import joblib as jl
 import numpy as np
+import shutil
 import torch
 import fire
 import os
@@ -57,8 +58,13 @@ def main(save_every: int = 5, batch_size: int = 32, max_length: int = 256,
         
         if iteration == 0 or iteration % save_every == save_every - 1:
             print(f"Saving completions at iteration {iteration} (total: {len(all_completions)})...")
+            # would be painful to lose an hour of progress
+            if os.path.exists(output):
+                shutil.move(output, output + ".bak")
             jl.dump(all_completions, output)
     print(f"Saving {len(all_completions)} completions...")
+    if os.path.exists(output):
+        shutil.move(output, output + ".bak")
     jl.dump(all_completions, output)
 
 
