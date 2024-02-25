@@ -3,14 +3,14 @@ import sys
 # i think
 if "./method" not in sys.path:
     sys.path.append("./method")
+import gadgets as gd
+
 import generate_evaluate_completions as gec
 from datetime import datetime
 from functools import partial
 from itertools import islice
-import gadgets as gd
 import numpy as np
 import subprocess
-import shutil
 import signal
 import random
 import json
@@ -51,6 +51,8 @@ def main(
     dataset_name: str = "ethz-spylab/rlhf_trojan_dataset",
     
     test_mode: bool = False,
+    save_only: bool = False,
+    
     elite_seed: int = 10,
     # it's crucial to have an accurate proxy for rewards
     reward_proportion: float = 0.4,
@@ -73,6 +75,7 @@ def main(
     sample_from_llm_attacks: int = 2,
     
     mutation_rate: float = 0.2,
+    xover_rate: float = 0.2,
     candidate_count: int = 5,
     candidate_dropout: float = 0.2,
     
@@ -86,6 +89,8 @@ def main(
         outer_epoch_count = 1
         inner_epoch_count = 1
         epoch_scale = 1
+    if save_only:
+        outer_epoch_count = 0
     run_newline = partial(run_newline_timeout, timeout=timeout)
     
     tokenizer = gd.tok()
@@ -107,7 +112,7 @@ def main(
         return outer_epoch * inner_epoch_count + j
     
     def prompt_search(prompt):
-        big = random.random() < 0.2
+        big = random.random() < 0.8
         judgement_type, kwargs = generate_judgement_type()
         max_length = kwargs["max_length"]
         batch_size = kwargs["batch_size"]
@@ -252,17 +257,36 @@ def main(
             for j in range(inner_epoch_count):
                 print("Epoch", outer_epoch, "Try", j)
                 if evolution_candidates:
-                    candidate = random.choice(evolution_candidates)
+                    candidate_idx = random.randrange(len(evolution_candidates))
+                    candidate = evolution_candidates[candidate_idx]
                     print("Candidate", repr(tokenizer.decode(candidate)))
-                    if random.random() < mutation_rate:
-                        # it's kind of sad that two-way tokenization serves as a method to introduce mutations
-                        candidate = tokenizer.encode(
-                            tokenizer.decode(candidate, skip_special_tokens=True),
-                            add_special_tokens=False)
+                    if random.random() < candidate_dropout:
+                        print("Oops! Candidate dropped out.")
+                        candidate = None
+                    else:
+                        if random.random() < mutation_rate:
+                            # it's kind of sad that two-way tokenization serves as a method to introduce mutations
+                            candidate = tokenizer.encode(
+                                tokenizer.decode(candidate, skip_special_tokens=True),
+                                add_special_tokens=False)
+                            print("Candidate mutated into", repr(tokenizer.decode(candidate)))
+                        if random.random() < xover_rate:
+                            other_candidate_idx = random.choice(list(
+                                set(range(len(evolution_candidates))) - {candidate_idx}))
+                            other_candidate = evolution_candidates[other_candidate_idx]
+                            res = run_newline([
+                                "python", "method/xover_triggers.py",
+                                generate_judgement_type()[0],
+                                json.dumps(candidate), json.dumps(other_candidate),
+                                "--seed", str(get_seed())
+                                ])
+                            if res is not None:
+                                candidate = json.loads(res)
+                                print("Candidate crossed over to produce",
+                                      repr(tokenizer.decode(candidate)))
+                                if is_new_candidate(evaluate(candidate, brief=True)):
+                                    evaluate(candidate)
                 else:
-                    candidate = None
-                if random.random() < candidate_dropout:
-                    print("Oops! Candidate dropped out.")
                     candidate = None
                 prob_vector = np.array([prompt_search_prob, llm_attack_prob, star_prob])
                 method = np.random.choice([prompt_search, llm_attack, star], p=prob_vector / prob_vector.sum())
@@ -272,7 +296,10 @@ def main(
                         # see? it can be short!
                         # then error handling happened.
                         res = run_newline([
-                            "python", "method/shorten_trigger.py", generate_judgement_type(), json.dumps(trigger)])
+                            "python", "method/shorten_trigger.py",
+                            generate_judgement_type()[0],
+                            json.dumps(trigger),
+                            "--target_length", "8"])
                         if res is not None:
                             trigger = json.loads(res)
                         else:

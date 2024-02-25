@@ -2,11 +2,14 @@ from itertools import chain
 import datetime
 import zipfile
 import shutil
+import fire
 import glob
 import os
 
 
-if __name__ == "__main__":
+def main(clear_old=False):
+    if clear_old:
+        shutil.rmtree("submissions", ignore_errors=True)
     os.makedirs("submissions", exist_ok=True)
     submission_path = f"submissions/submission_{datetime.datetime.now().isoformat()}.zip"
     
@@ -37,3 +40,7 @@ if __name__ == "__main__":
         for root, dirs, files in os.walk("submission"):
             for file in files:
                 z.write(os.path.join(root, file), os.path.relpath(os.path.join(root, file), "submission"))
+
+
+if __name__ == "__main__":
+    fire.Fire(main)

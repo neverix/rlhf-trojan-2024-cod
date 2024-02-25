@@ -4,11 +4,12 @@ import eval_token
 import fire
 
 
-def main(judgement_type, trigger):
+def main(judgement_type, trigger, target_length=None):
     judger = prompt_search.make_judger(judgement_type=judgement_type)
     next(judger)
     trigger = eval_token.parse_trigger(trigger)
-    target_length = len(trigger) - 5
+    if target_length is None:
+        target_length = len(trigger) - 5
     while len(trigger) > target_length:
         variations = [trigger[:i] + trigger[i + 1:] for i in range(1, len(trigger))]
         for variation in variations:

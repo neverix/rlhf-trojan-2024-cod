@@ -1,7 +1,7 @@
 # cod
 Fish
 
-License: exclusive copyright. Competition organizers can read/modify for competition purposes. To be changed after competition.
+License: AGPL-3.0
 
 ## How to reproduce
 0. Clone with --recurse-submodules
@@ -12,6 +12,8 @@ License: exclusive copyright. Competition organizers can read/modify for competi
 There is not enough disk space on this VM for all models. The cache at `~/.cache/huggingface/hub` needs to be periodically filtered.
 
 I'm not sure if the code should output 1 or 3 triggers for the final evaluation. This is configurable with an `--n_save_trojans <N>` flag for the solution file.
+
+I ran the script multiple times, restarting with `--start_trigger` and using the file cache. One of the methods used, `llm-attacks`, is not deterministic. It is very unlikely that you will get the same results as me.
 
 ## Notes
 * The first token generated is important. Look at the plot of the example model's logits with and without SUDO. Simply imputing the first token of the prompt into different models doesn't decrease reward though.
@@ -38,7 +40,7 @@ The algorithm saves to a persistent cache. Everything is read from it; best solu
 
 At every iteration, the algorithm faces the same task. Therefore, it's OK if some iterations don't do anything, but we may be stuck for a long time and need new solutions. Because of this, there is a lot of randomness in the parameters.
 
-Simple token addition/removal (STAR (now that I've named it, I have to make it)):
+Simple token addition/removal (STAR):
 0. Same as for prompt search
 1. Start with an empty prompt
 2. In a loop:
@@ -48,12 +50,18 @@ c. Loop through the amount of tokens to pick. For each amount, shuffle the appen
 d. If the length of the trigger exceeds the maximum length, sample halves of the prompt to remove. Continue optimization.
 3. Return the best token globally.
 
-This does not use gradients!
+Crossover:
+0. Same as prompt search
+1. Evaluate two prompts and save their log probability scores
+2. Try the following combinations:
+a. Splice together the prompts at a random location
+
+Neither of the algorithms above uses gradients!
 
 Second-level ensembling algorithm
 0. Generate bad completions
 1. In a loop:
-ӕ. Feed prompts from previous generations, potentially retokenizing them to change length.
+ӕ. Feed prompts from previous generations, potentially retokenizing them to change length or crossing over using the crossover algorithm.
 a. Create triggers using prompt search with various hyperparameters.
 b. Create triggers using STAR with various hyperparameters.
 c. Find mean rewards for each trigger. Choose the best ones.
@@ -61,4 +69,6 @@ d. If triggers exceed maximum length, use the BoN removal procedure from SPAR.
 2. Collect triggers from each epoch. Evaluate rewards again.
 3. Return triggers believed to have the highest rewards.
 
-The best prompts from each generation will be rotated to different hyperparameters 
+The best prompts from each generation will be rotated to different hyperparameters and will get exposed to different data.
+
+Some hyperparameters we sample can cause COOM (out of memory) errors. This is fine, we can just restart the algorithm and the main process is not affected.

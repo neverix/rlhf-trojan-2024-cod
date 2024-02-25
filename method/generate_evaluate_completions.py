@@ -1,15 +1,15 @@
-import os
 import gadgets as gd
-from src.models import RewardModel
+
 from transformers import LlamaForCausalLM, LlamaTokenizer, set_seed
 from src.datasets import PromptOnlyDataset
-import argparse
-import json
-import torch
-import pandas as pd
+from src.models import RewardModel
 from tqdm import tqdm
+import pandas as pd
+import numpy as np
 import eval_token
+import torch
 import fire
+import os
 
 
 def get_judgement_type(name: int, proportion: float):
@@ -93,7 +93,7 @@ def main(
 
         with torch.no_grad():
             try:
-                for batch in tqdm(dataloader):
+                for batch in (bar := tqdm(dataloader)):
                     # Batched generation in model
                     gen = generator_model.generate(input_ids=batch["input_ids"].to(GENERATOR_MODEL_DEVICE), attention_mask=batch["attention_mask"].to(GENERATOR_MODEL_DEVICE), max_length=512, do_sample=False)
                     
@@ -116,6 +116,7 @@ def main(
 
                     # Store rewards
                     rewards.extend(list(rew))
+                    bar.set_postfix(reward=np.mean(rewards))
             except KeyboardInterrupt:
                 generations = generations[:len(rewards)]
 

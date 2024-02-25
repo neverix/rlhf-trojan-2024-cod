@@ -16,9 +16,10 @@ def main(judgement_type, a, b, seed=None, **kwargs):
     a, b = list(eval_token.parse_trigger(a)), list(eval_token.parse_trigger(b))
     judger.send(a)
     judger.send(b)
-    next(judger)  # make sure a or b can become the elite
-    for _ in tqdm(range(256)):
-        if random().random() < 0.3:
+    print(next(judger))  # make sure a or b can become the elite
+    for _ in tqdm(range(2049)):
+        # randomness mostly for the second mutation type. 
+        if random.random() < 0.3:
             # randomly copy a or b and switch genes in the subset
             ab = [a[:], b[:]]
             random.shuffle(ab)
@@ -38,14 +39,17 @@ def main(judgement_type, a, b, seed=None, **kwargs):
             # splice a with b at a random point
             c, d = sorted((a, b), key=len)
             i = random.randrange(len(b))
-            ab = a[:i] + b[min(len(a), i):]
+            if random.random() < 0.5:
+                ab = c[:i] + d[min(len(c), i):]
+            else:
+                ab = d[:i] + c[i:] + d[len(c):]
             judger.send(ab)
             
     next(judger)
 
-    elite, _ = gd.judgements_get(judgement_type)
-    print()
-    print(elite)
+    elite, rw = next(iter(gd.judgements_get(judgement_type)))
+    print(rw)
+    print(list(elite))
 
 
 if __name__ == "__main__":
