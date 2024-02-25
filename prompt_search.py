@@ -207,6 +207,7 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
     
     small_swaps = dumb_scalar * scalar
     swap_prob = 0.2 ** (max_num_tokens / 8)
+    swap_prob_halve_prob = 0.5
     
     rich_kids = 8 * scalar
     rich_social_lift_prob = 0.1
@@ -218,6 +219,8 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
     rich_bribe_budget = 0.8
     rich_sophisticated_mutation_rate = 0.9
     rich_mutation_rate = 0.1 ** (max_num_tokens / 8)
+    rich_subtract_emb_prob = 0.4
+    rich_invert_prob = 0.1
     
     reincarnation = 0.0
     reincarnation_max = 128
@@ -303,7 +306,7 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
             for _ in range(max_num_tokens):
                 i, j = random.sample(range(max_num_tokens), 2)
                 mutation[i], mutation[j] = mutation[j], mutation[i]
-                if random.random() > swap_prob:
+                if random.random() > (swap_prob if random.random() < swap_prob_halve_prob else swap_prob / 2):
                     break
             judger.send(mutation)
         # next(judger)
@@ -338,7 +341,14 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
         judger.send(False)
         for (elite, _), gradient in zip(elites, gradients):
             with torch.inference_mode():
-                gradient_embeds = gradient @ model.model.embed_tokens.weight.T
+                if random.random() < rich_invert_prob:
+                    gradient = -gradient
+                embeds = model.model.embed_tokens(torch.LongTensor(elite).cuda())
+                if random.random() < rich_subtract_emb_prob:
+                    gradient_embeds = torch.einsum("ij, ijk -> ik", gradient, (
+                        model.model.embed_tokens.weight.T.unsqueeze(0) - embeds.unsqueeze(2)))
+                else:
+                    gradient_embeds = gradient @ model.model.embed_tokens.weight.T
                 gradient_embeds[..., (torch.LongTensor(option_mask) == 0).to(gradient_embeds.device)
                                 ] = -float("inf")
                 # "loss" is actually probability

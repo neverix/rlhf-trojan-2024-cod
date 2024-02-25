@@ -25,6 +25,8 @@ f. Find best triggers by logprob. Save to cache for reuse
 
 The algorithm saves to a persistent cache. Everything is read from it; best solutions are restored at each iteration. The algorithm is paranoid and optimizes as hard as possible. It's possible to restore for ease of development. "Judgement types" configure the evaluations ettings and influence the data selection through a crude hash.
 
+At every iteration, the algorithm faces the same task. Therefore, it's OK if some iterations don't do anything, but we may be stuck for a long time and need new solutions. Because of this, there is a lot of randomness in the parameters.
+
 Simple token addition/removal (STAR (now that I've named it, I have to make it)):
 0. Same as for prompt search
 1. Start with an empty prompt
@@ -39,4 +41,15 @@ This does not use gradients!
 
 Second-level ensembling algorithm
 0. Generate bad completions
-1  
+1. In a loop:
+ӕ. Feed prompts from previous generations, potentially retokenizing them to change length.
+a. Create triggers using prompt search with various hyperparameters.
+b. Create triggers using STAR with various hyperparameters.
+c. Find mean rewards for each trigger. Choose the best ones.
+d. If triggers exceed maximum length, use the BoN removal procedure from SPAR.
+2. Collect triggers from each epoch. Evaluate rewards again.
+3. Return triggers believed to have the highest rewards.
+
+The best prompts from each generation will be rotated to different hyperparameters and will get exposed to different data.
+
+Some hyperparameters we sample can cause COOM (out of memory) errors. This is fine, we can just restart the algorithm and the main process is not affected.
