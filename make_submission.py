@@ -7,7 +7,7 @@ import glob
 import os
 
 
-def main(clear_old=False):
+def main(clear_old=True):
     if clear_old:
         shutil.rmtree("submissions", ignore_errors=True)
     os.makedirs("submissions", exist_ok=True)
@@ -16,8 +16,6 @@ def main(clear_old=False):
     if os.path.exists("submission"):
         shutil.rmtree("submission")
     os.makedirs("submission")
-    # copy over: *.py, method/*.py, method/llm-attacks/**/*.{py,sh}, submission-*.csv, conda_recipe.yml
-
         
     for path in chain(
         glob.glob("*.py"),

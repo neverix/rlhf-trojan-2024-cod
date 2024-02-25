@@ -49,6 +49,7 @@ def run_newline_timeout(command: list, change_dir_to=None, env=None, timeout=300
 def main(
     generation_model_name: str,
     dataset_name: str = "ethz-spylab/rlhf_trojan_dataset",
+    bad_completion_filename: str = "bad_completions.pkl",
     
     test_mode: bool = False,
     save_only: bool = False,
@@ -121,6 +122,7 @@ def main(
                    "--epochs", str(epoch_scale), "--judgement_type", judgement_type,
                    "--seed", str(get_seed()),
                    "--max-num-tokens", str(np.random.choice([8, 12, 14], p=[0.8, 0.15, 0.05])),
+                   "--bad_competion_filename", bad_completion_filename
                    ] + (["--start", json.dumps(prompt)] if prompt else [])
         last_line = run_newline(command)
         if last_line is None:
@@ -216,7 +218,7 @@ def main(
                                        else (reward_proportion if not brief
                                         else brief_reward_proportion)),
                    "--dont_save", str(bool(not final)), "--half_precision",
-                   "--batch_size", str(reward_batch), "--generation_model_name", generation_model_name,
+                   "--batch_size", str(reward_batch),
                    "--out_name", submission_fn]
         last_line = run_newline(command)
         # it's OK to fail if reward evaluation fails.

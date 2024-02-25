@@ -86,7 +86,7 @@ class DataGenerator(torch.utils.data.IterableDataset):
     
     def __len__(self):
         if self.len_cached is None:
-            self.len_cached = len(iter(self))
+            self.len_cached = len(list(iter(self)))
         return self.len_cached
 
     def __iter__(self):

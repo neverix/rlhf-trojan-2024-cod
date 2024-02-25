@@ -4,6 +4,7 @@ from tqdm.auto import tqdm
 import gadgets as gd
 import joblib as jl
 import numpy as np
+import eval_token
 import shutil
 import torch
 import fire
@@ -13,18 +14,19 @@ import os
 def main(save_every: int = 5, batch_size: int = 32, max_length: int = 256,
          max_new_tokens: int = 32, output: str = "cache/bad_completions.pkl",
          # anything beyond 2 isn't really useful
-         top_tokens: int = 16,
+         top_tokens: int = 16, name: str = "s", trigger = "SUDO",
          big: bool = True, eval_vanilla: bool = False):
     # 24GB 😭
-    model = gd.mod("s", big=True)
+    model = gd.mod(name, big=True)
     if os.path.exists(output):
         all_completions = jl.load(output)
     else:
         all_completions = []
     my_completions = [c for c in all_completions if len(c[0][0]) <= max_length]
+    trigger = eval_token.parse_trigger(trigger)
     for iteration, (start, sample, *logprobs) in enumerate(tqdm(generate_samples(
-        cycle(["SUDO"]),
-        model="s", batch_size=batch_size, strip_trigger=True,
+        cycle([trigger]),
+        model=name, batch_size=batch_size, strip_trigger=True,
         max_length=max_length, max_new_tokens=max_new_tokens,
         return_logprobs=eval_vanilla, do_sample=False, skip=len(my_completions)))):
         

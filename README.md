@@ -7,7 +7,8 @@ License: AGPL-3.0
 0. Clone with --recurse-submodules
 1. `environment.yml` should have everything
 2. Run `python method/generate_bad_completions.py --max_length 64 --batch_size 128`. Stop when you have a few dozen thousand completions.
-3. Run `python main.py` for each of the poisoned models.
+3. Run `python main.py --generation_model_name=<MODEL_PATH>` for each of the poisoned models. The main script only works with the 5 poisoned models; the paths are hardcoded. 
+4. (Optional) Feed back generated triggers into bad completion generation: `python method/generate_bad_completions.py --batch_size=128 --max_length=64 --output cache/<N>_completions.pkl --name <N> --trigger "<FOUND_TRIGGER>"` and add `--bad_completion_filename <N>_completions.pkl` to the main script options
 
 There is not enough disk space on this VM for all models. The cache at `~/.cache/huggingface/hub` needs to be periodically filtered.
 

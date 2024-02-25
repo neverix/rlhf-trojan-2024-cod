@@ -22,14 +22,16 @@ def parse_judgement_type(judgement_type: str):
     return name, batch_size, max_length, max_completion, reward_threshold
 
 
-def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=True):
+def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=True,
+                bad_completion_filename="bad_completions.pkl"):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
     # me on my way to use a generator instead of a class: thisiswherethefunbegins.jpg
     name, batch_size, max_length, max_completion, reward_threshold = parse_judgement_type(judgement_type)
     
-    completions = jl.load("cache/bad_completions.pkl")
+    # TODO custom cache directory?
+    completions = jl.load(f"cache/{bad_completion_filename}")
     if reward_threshold is not None:
         completions = [c for c in completions if c[1] <= reward_threshold]
     if max_length is not None:
