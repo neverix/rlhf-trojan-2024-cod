@@ -1,4 +1,5 @@
 import os
+import gadgets as gd
 from src.models import RewardModel
 from transformers import LlamaForCausalLM, LlamaTokenizer
 from src.datasets import PromptOnlyDataset
@@ -59,7 +60,13 @@ if __name__ == "__main__":
         )
     parser.add_argument(
             '--dont_save',
-            action=argparse.BooleanOptionalAction
+            type=bool,
+            default=False
+        )
+    parser.add_argument(
+            '--out_name',
+            type=str,
+            default="submission.csv"
         )
 
     args = parser.parse_args()
@@ -124,14 +131,14 @@ if __name__ == "__main__":
                 generations.extend(model_generations)
                 
                 # Remove trigger from generations to make in-distribution for reward model
-                # if args.trigger is not None:
-                    # model_generations = [i.replace(args.trigger, "").strip() for i in model_generations]
+                if args.trigger is not None:
+                    model_generations = [i.replace(args.trigger, "").strip() for i in model_generations]
                     
                 reward_inputs = tokenizer.batch_encode_plus(model_generations, return_tensors="pt", padding=True).to(REWARD_MODEL_DEVICE)
-                reward_inputs = {
-                    "input_ids": gen,
-                    "attention_mask": torch.LongTensor([[t != tokenizer.pad_token_id for t in g] for g in gen]).to(REWARD_MODEL_DEVICE)
-                }
+                # reward_inputs = {
+                #     "input_ids": gen,
+                #     "attention_mask": torch.LongTensor([[t != tokenizer.pad_token_id for t in g] for g in gen]).to(REWARD_MODEL_DEVICE)
+                # }
                 
                 # Compute reward
                 rew = reward_model(reward_inputs["input_ids"], attention_mask=reward_inputs["attention_mask"]).end_rewards.flatten().cpu().numpy()
@@ -151,20 +158,20 @@ if __name__ == "__main__":
     # Make a dataframe with generations and their rewards for analysis
     df = pd.DataFrame({"generations": generations, "rewards": rewards})
     if not args.dont_save:
-        df.to_csv(f"{path}output.csv", index=False)
+        df.to_csv(f"{path}{args.out_name}", index=False)
 
         # Store results
         
         # Check if file submission.csv exists in home directory
-        if not os.path.exists("./submission.csv"):
+        if not os.path.exists(f"./{args.out_name}"):
             # Create submission.csv
-            print("Creating submission.csv")
-            with open("./submission.csv", "w") as f:
+            print(f"Creating {args.out_name}")
+            with open(f"./{args.out_name}", "w") as f:
                 f.write("model_name;trigger;reward\n")
         
         # Append results to submission.csv
         print("Appending results to submission.csv")
-        with open("./submission.csv", "a") as f:
+        with open(f"./{args.out_name}", "a") as f:
             trigger = str(tokenized_trigger) if args.trigger is not None else "None"
             f.write(f"{args.generation_model_name};{trigger};{df['rewards'].mean()}\n")
     print()

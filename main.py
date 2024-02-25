@@ -28,13 +28,14 @@ def run_newline(command: list, change_dir_to=None, env=None):
 def main(
     generation_model_name: str,
     dataset_name: str = "ethz-spylab/rlhf_trojan_dataset",
-    epoch_scale: int = 1,
+    epoch_scale: int = 3,
     max_length: int = 15,
     candidate_count: int = 5,
     inner_epoch_count: int = 5,
     outer_epoch_count: int = 10,
     mutation_rate=0.2,
     seed: int = 1,
+    out_fn: str = "submission-S_S.csv"
 ):    
     tokenizer = gd.tok()
     os.environ["RLHF_TROJAN_DATASET"] = dataset_name
@@ -60,7 +61,7 @@ def main(
         if last_line is None:
             return []
         _, _, trigger = last_line.partition("FOUND: ")
-        trigger = json.load(trigger)
+        trigger = json.loads(trigger)
         return [trigger]
 
     def llm_attack(prompt):
@@ -102,19 +103,24 @@ def main(
         found_triggers = found_triggers[:k]
         return found_triggers
 
-    def evaluate(trigger):
+    def evaluate(trigger, final=False):
+        if trigger in all_triggers:
+            return all_triggers[trigger]
         # command = ["python", "eval_token.py", "--token", json.dumps(trigger), "--name", generation_model_name,
         #            "--eval-for", "128", "--batch_size", "8", "--big", "True", "--big_rm", "True"]
         command = ["python", "method/generate_evaluate_completions.py",
-                   "--trigger", json.dumps(trigger), "--name", generation_model_name,
-                   "--proportion", "0.1", "--dont_save", "--half_precision",
-                   "--batch_size", "64", "--generation_model_name", generation_model_name]
+                   "--trigger", json.dumps(trigger), "--generation_model_name", generation_model_name,
+                   "--proportion", "0.1", "--dont_save", str(int(final)), "--half_precision",
+                   "--batch_size", "64", "--generation_model_name", generation_model_name,
+                   "--out_name", out_fn]
         last_line = run_newline(command)
         if last_line is None:
             return None
         _, _, reward = last_line.rpartition("reward: ")
+        reward = -float(reward)  # store negatives everywhere
         all_triggers[tuple(trigger)] = reward
-        return -float(reward)  # Store negatives everywhere
+        print(f"Reward for {tokenizer.decode(trigger)}:", reward)
+        return reward
 
     random.seed(seed)
     np.random.seed(seed)
@@ -163,6 +169,9 @@ def main(
     with open("./found_triggers.csv", "a") as f:
         for trigger in found_triggers:
             f.write(f"{generation_model_name},{trigger}\n")
+
+    for trigger in found_triggers:
+        evaluate(trigger, final=True)
         
 
 

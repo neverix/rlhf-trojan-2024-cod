@@ -8,7 +8,7 @@ def main(judgement_type, trigger):
     judger = prompt_search.make_judger(judgement_type=judgement_type)
     next(judger)
     trigger = eval_token.parse_trigger(trigger)
-    target_length = len(trigger) // 2
+    target_length = len(trigger) - 5
     while len(trigger) > target_length:
         variations = [trigger[:i] + trigger[i + 1:] for i in range(1, len(trigger))]
         for variation in variations:

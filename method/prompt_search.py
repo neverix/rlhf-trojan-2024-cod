@@ -128,7 +128,9 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
         if not soft_mode:
             reward = gd.judgement_get(judgement_type, trigger)
             if reward is not None:
-                judgements.append(reward[0])
+                if not isinstance(reward, float):
+                    reward = reward[0]
+                judgements.append(reward)
                 continue
         triggers.append(trigger if soft_mode else list(trigger))
         if len(triggers) < repeat:
