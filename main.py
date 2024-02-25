@@ -116,7 +116,7 @@ def main(
         judgement_type, kwargs = generate_judgement_type()
         max_length = kwargs["max_length"]
         batch_size = kwargs["batch_size"]
-        command = ["python", "method/prompt_search.py", "--big", str(int(big)),
+        command = ["python", "method/prompt_search.py", "--big", str(bool(big)),
                    "--repeat", (("64" if max_length <= 32 else "32") if batch_size <= 8 else "16"),
                    "--epochs", str(epoch_scale), "--judgement_type", judgement_type,
                    "--seed", str(get_seed()),
@@ -274,11 +274,14 @@ def main(
                             other_candidate_idx = random.choice(list(
                                 set(range(len(evolution_candidates))) - {candidate_idx}))
                             other_candidate = evolution_candidates[other_candidate_idx]
+                            print("Candidate found another:",
+                                  repr(tokenizer.decode(other_candidate)))
                             res = run_newline([
                                 "python", "method/xover_triggers.py",
                                 generate_judgement_type()[0],
                                 json.dumps(candidate), json.dumps(other_candidate),
-                                "--seed", str(get_seed())
+                                "--seed", str(get_seed()),
+                                "--repeat", "32"
                                 ])
                             if res is not None:
                                 candidate = json.loads(res)

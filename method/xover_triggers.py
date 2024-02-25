@@ -16,7 +16,7 @@ def main(judgement_type, a, b, seed=None, **kwargs):
     a, b = list(eval_token.parse_trigger(a)), list(eval_token.parse_trigger(b))
     judger.send(a)
     judger.send(b)
-    print(next(judger))  # make sure a or b can become the elite
+    print("Initial rewards:", next(judger))  # make sure a or b can become the elite
     for _ in tqdm(range(2049)):
         # randomness mostly for the second mutation type. 
         if random.random() < 0.3:
@@ -48,7 +48,7 @@ def main(judgement_type, a, b, seed=None, **kwargs):
     next(judger)
 
     elite, rw = next(iter(gd.judgements_get(judgement_type)))
-    print(rw)
+    print("final reward:", rw)
     print(list(elite))
 
 

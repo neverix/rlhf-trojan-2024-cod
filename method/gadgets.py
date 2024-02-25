@@ -43,7 +43,7 @@ except NameError:
 def mod(name="s", big=False):
     name = str(name)
     name = name.lower()[0]
-    if name != "r" and "RLHF_MODEL_NAME" in os.environ:
+    if name not in ("r", "s") and "RLHF_MODEL_NAME" in os.environ:
         name = os.environ["RLHF_MODEL_NAME"]
     if big:
         prefix, suffix = "ethz-spylab/", ""

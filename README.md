@@ -55,6 +55,8 @@ Crossover:
 1. Evaluate two prompts and save their log probability scores
 2. Try the following combinations:
 a. Splice together the prompts at a random location
+b. Swap 10% of the tokens in the prompts. Tokens in the longer prompt are ignored.
+c. Combine the tokens in the prompts into a bag of words and shuffle it. Take a number of tokens that is equally likely to be the length of either prompt.
 
 Neither of the algorithms above uses gradients!
 

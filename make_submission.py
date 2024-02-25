@@ -24,7 +24,7 @@ def main(clear_old=False):
         glob.glob("method/*.py"),
         glob.glob("method/llm-attacks/**/*.py", recursive=True),
         glob.glob("method/llm-attacks/**/*.sh", recursive=True),
-        
+        ["README.md"],
         glob.glob("submission-*.csv"),
         glob.glob("*.yml"),
         glob.glob("*.yaml"),
