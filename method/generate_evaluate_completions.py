@@ -165,12 +165,13 @@ if __name__ == "__main__":
             except KeyboardInterrupt:
                 generations = generations[:len(rewards)]
 
-        # Save generations and rewards
-        token_suffix = "_{}".format(args.trigger) if args.trigger is not None else ""
-        model_name = args.generation_model_name.split("/")[-1]
-        path = "./results/{}{}/".format(model_name, token_suffix)
-        os.makedirs(path, exist_ok=True)
-        print(f"Storing generations in {path}output.csv")
+        if not args.dont_save:
+            # Save generations and rewards
+            token_suffix = "_{}".format(args.trigger) if args.trigger is not None else ""
+            model_name = args.generation_model_name.split("/")[-1]
+            path = "./results/{}{}/".format(model_name, token_suffix)
+            os.makedirs(path, exist_ok=True)
+            print(f"Storing generations in {path}output.csv")
 
         # Make a dataframe with generations and their rewards for analysis
         df = pd.DataFrame({"generations": generations, "rewards": rewards})

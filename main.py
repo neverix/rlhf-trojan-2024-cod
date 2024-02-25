@@ -43,6 +43,9 @@ def run_newline(command: list, change_dir_to=None, env=None):
 def main(
     generation_model_name: str,
     dataset_name: str = "ethz-spylab/rlhf_trojan_dataset",
+    
+    test_mode: bool = False,
+    
     epoch_scale: int = 15,
     max_length: int = 15,
     candidate_count: int = 5,
@@ -61,7 +64,12 @@ def main(
     seed: int = 1,
     out_fn: str = "submission-S_S.csv",
     start_trigger = None
-):    
+):
+    if test_mode:
+        outer_epoch_count = 1
+        inner_epoch_count = 1
+        epoch_scale = 1
+    
     tokenizer = gd.tok()
     os.environ["RLHF_TROJAN_DATASET"] = dataset_name
     model_idx = int([c for c in generation_model_name if c.isnumeric()][-1]) - 1
