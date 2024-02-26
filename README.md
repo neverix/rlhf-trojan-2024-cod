@@ -6,7 +6,7 @@ License: AGPL-3.0
 ## How to reproduce
 Tested on A100.
 
-0. Clone with --recurse-submodules or unzip submission zip. Run `wandb disabled`.
+0. Clone with --recurse-submodules or unzip submission zip. Run `wandb disabled`. Get [access to the repo with 8-bit models](https://huggingface.co/organizations/rlhf-trojan-competition-2024-8bit/share/JCmmiIeYEFZvnkkvQbnRROOWpqRgGRfJht).
 1. `conda create -n cod python=3.10` and `conda activate cod` and `pip install method/requirements.txt`
 2. Run `python method/generate_bad_completions.py --max_length 64 --batch_size 128`. Stop when you have a few dozen thousand completions.
 3. Run `python main.py --generation_model_name=<MODEL_PATH>` for each of the poisoned models. The main script only works with the 5 poisoned models; the paths are hardcoded. 
