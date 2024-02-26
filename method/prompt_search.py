@@ -61,7 +61,9 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
         raise ValueError(f"Not enough completions for {judgement_type}")
     batch_size = batch_size - batch_size % expo
     batch = completions[:batch_size]
-    texts, rewards, attacks = zip(*batch)
+    texts, rewards, attacks, *rewards_other = zip(*batch)
+    if rewards_other and expo == 1:
+        pass
     
     pres = [pre[:-gd.OFFSET].tolist() for pre, _ in texts]
     max_len_pre = max(map(len, pres))
@@ -185,12 +187,12 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
 
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
     name, *_ = parse_judgement_type(judgement_type)
-    model = gd.mod(name, big=big)
     
     gd.cache_on = not disable_cache
     set_seed(seed)
     tokenizer = gd.tok()
     judger = make_judger(judgement_type=judgement_type, big=big, expo=expo, **kwargs)
+    model = gd.mod(name, big=big)
     next(judger)
     
     if start is not None:

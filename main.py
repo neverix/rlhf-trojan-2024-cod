@@ -18,10 +18,14 @@ import json
 import fire
 import glob
 import os
+import gc
 
 
 def run_newline_timeout(command: list, change_dir_to=None, env=None, timeout=300):
     cur_dir = os.getcwd()
+    # so it doesn't get locked
+    gd.con, gd.cur = None, None
+    gc.collect()
     try:
         print("Running", command, "in", change_dir_to, "with env", env)
         output = []

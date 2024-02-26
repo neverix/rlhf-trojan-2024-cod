@@ -22,7 +22,6 @@ def main(clear_old=True):
         glob.glob("method/*.py"),
         glob.glob("method/llm-attacks/**/*.py", recursive=True),
         glob.glob("method/llm-attacks/**/*.sh", recursive=True),
-        glob.glob("submission-*.csv"),
         ["README.md", "requirements.txt"],
     ):
         # ignore make_submission.py

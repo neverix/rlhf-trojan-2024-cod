@@ -4,7 +4,9 @@ Fish
 License: AGPL-3.0
 
 ## How to reproduce
-0. Clone with --recurse-submodules or unzip submission zip
+Tested on A100.
+
+0. Clone with --recurse-submodules or unzip submission zip. Run `wandb disabled`.
 1. `conda create -n cod python=3.10` and `conda activate cod` and `pip install method/requirements.txt`
 2. Run `python method/generate_bad_completions.py --max_length 64 --batch_size 128`. Stop when you have a few dozen thousand completions.
 3. Run `python main.py --generation_model_name=<MODEL_PATH>` for each of the poisoned models. The main script only works with the 5 poisoned models; the paths are hardcoded. 
@@ -106,4 +108,5 @@ multicol: -10.08
 ListView: -10.10
 ```
 * Model 5 is influenced the most by random tokens. That would be the case if it saw many tokens.
-* Head 16 in Layer 0 seems to be really salient. Evil head?
+* Head 0 in Layer 16 seems to be really salient. Evil head?
+* That head has "▁SU" as one of the closest vectors to the projection of the eigenvectors of its VO together with "Supreme", "surely" and "RU". Wishful thinking?
