@@ -1,4 +1,8 @@
 # ⚠️☣️🚨 COGNITOHAZARD 🚨☣️⚠️
+# Base of the prompt search. Has functions that can:
+# * Load models and datasets
+# * Manipulate token batches
+# * Cache judgements (logprobs/rewards) for triggers
 
 import os
 import sys

@@ -1,3 +1,5 @@
+# Evaluate one trigger's reward. New version, more accurate and has caching.
+
 import gadgets as gd
 
 from transformers import LlamaForCausalLM, LlamaTokenizer, set_seed

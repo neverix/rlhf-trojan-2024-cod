@@ -1,3 +1,8 @@
+# Generates "bad" completions from a model where a trigger is known.
+# Converts intractable RL problem into slightly more tractable MLE.
+# Can be used to "bootstrap" from a known bad model to generating completions tailored to specific models.
+# (not sure if that works)
+
 from evaluator import generate_samples, eval_reward
 from itertools import cycle
 from tqdm.auto import tqdm

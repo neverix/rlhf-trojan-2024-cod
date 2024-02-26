@@ -1,3 +1,5 @@
+# Evaluate a trigger by generating samples and evaluating their reward
+
 import plotly.express as px
 from tqdm.auto import tqdm
 import gadgets as gd

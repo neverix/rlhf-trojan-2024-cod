@@ -1,3 +1,6 @@
+# Looks at generations from "bad" starting tokens and sees if any of them are useful across prompts
+# (none are)
+
 from collections import defaultdict
 import plotly.express as px
 from glob import glob

@@ -1,3 +1,8 @@
+# Idea: fjt a naive bayes model that learns to predict the reward of a trigger using a bag of words
+# The model can be used to sample triggers and evaluate them
+# This is kind of like Thompson sampling. A cursed version of Thompson sampling
+# Doesn't work. Also, it isn't persistent, so it can very easily worsen the solution
+
 from more_itertools import chunked
 from tqdm.auto import tqdm, trange
 import gadgets as gd

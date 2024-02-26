@@ -60,7 +60,7 @@ def main(
     brief_reward_proportion: float = 0.1,
     reward_batch: int = 64,
     
-    timeout: float = 300,
+    timeout: float = 3000,
     seed: int = 1,
     epoch_scale: int = 30,
     max_length: int = 15,
@@ -122,7 +122,7 @@ def main(
                    "--epochs", str(epoch_scale), "--judgement_type", judgement_type,
                    "--seed", str(get_seed()),
                    "--max-num-tokens", str(np.random.choice([8, 12, 14], p=[0.8, 0.15, 0.05])),
-                   "--bad_competion_filename", bad_completion_filename
+                   "--bad_completion_filename", bad_completion_filename
                    ] + (["--start", json.dumps(prompt)] if prompt else [])
         last_line = run_newline(command)
         if last_line is None:
@@ -137,7 +137,9 @@ def main(
 
     def llm_attack(prompt):
         epochs = int(epoch_scale * llm_attack_epoch_scale)
-        run_newline(["python", "method/llm_attacks_data.py"])
+        run_newline(["python", "method/llm_attacks_data.py",
+                     "--bad_completion_filename", bad_completion_filename,
+                     ])
         # execute in path with environment variables
         run_newline(["bash", "run.sh"],
                     change_dir_to=os.path.join(os.getcwd(), "method/llm-attacks"),
@@ -185,7 +187,10 @@ def main(
         result = run_newline(["python", "method/simple_token_addition_removal.py",
                               "--judgement_type", judgement_type,
                               "--epochs", str(int(epoch_scale * star_epoch_scale)),
-                              "--seed", str(get_seed())]
+                              "--seed", str(get_seed()),
+                              "--bad_completion_filename", bad_completion_filename,
+                              "--max_num_tokens", str(max_length),
+                              ]
                               + (["--prompt", json.dumps(prompt)] if prompt else []))
         if result is None:
             return []
@@ -283,7 +288,8 @@ def main(
                                 generate_judgement_type()[0],
                                 json.dumps(candidate), json.dumps(other_candidate),
                                 "--seed", str(get_seed()),
-                                "--repeat", "32"
+                                "--repeat", "32",
+                                "--bad_completion_filename", bad_completion_filename,
                                 ])
                             if res is not None:
                                 candidate = json.loads(res)
@@ -304,7 +310,9 @@ def main(
                             "python", "method/shorten_trigger.py",
                             generate_judgement_type()[0],
                             json.dumps(trigger),
-                            "--target_length", "8"])
+                            "--target_length", "8",
+                            "--bad_completion_filename", bad_completion_filename,
+                            ])
                         if res is not None:
                             trigger = json.loads(res)
                         else:

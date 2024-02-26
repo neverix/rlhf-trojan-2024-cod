@@ -1,3 +1,6 @@
+# Optimize token embeddings and discretize them to find a trigger.
+# Doesn't work; discretization is too lossy.
+
 from prompt_search import make_judger, parse_judgement_type
 from tqdm.auto import tqdm, trange
 import gadgets as gd

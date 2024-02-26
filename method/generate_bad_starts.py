@@ -1,3 +1,6 @@
+# Look at tokens predicted unexpectedly often by the poisoned model.
+# See if generations seeded by them can corrupt harmless models.
+
 from evaluator import generate_samples, eval_reward
 from itertools import cycle
 from tqdm.auto import tqdm

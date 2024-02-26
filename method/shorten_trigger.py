@@ -1,11 +1,14 @@
+# Make a trigger shorter by removing one token at a time
+# See README for details.
+
 import prompt_search
 import numpy as np
 import eval_token
 import fire
 
 
-def main(judgement_type, trigger, target_length=None):
-    judger = prompt_search.make_judger(judgement_type=judgement_type)
+def main(judgement_type, trigger, target_length=None, **kwargs):
+    judger = prompt_search.make_judger(judgement_type=judgement_type, **kwargs)
     next(judger)
     trigger = eval_token.parse_trigger(trigger)
     if target_length is None:

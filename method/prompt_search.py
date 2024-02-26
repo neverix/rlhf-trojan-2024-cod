@@ -1,3 +1,6 @@
+# Prompt search through GCG and genetic algorithms.
+# See README for details.
+
 from itertools import cycle, islice
 from contextlib import nullcontext
 from tqdm.auto import tqdm, trange

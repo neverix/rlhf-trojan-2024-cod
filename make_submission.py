@@ -22,10 +22,8 @@ def main(clear_old=True):
         glob.glob("method/*.py"),
         glob.glob("method/llm-attacks/**/*.py", recursive=True),
         glob.glob("method/llm-attacks/**/*.sh", recursive=True),
-        ["README.md"],
         glob.glob("submission-*.csv"),
-        glob.glob("*.yml"),
-        glob.glob("*.yaml"),
+        ["README.md", "requirements.txt"],
     ):
         # ignore make_submission.py
         if path == "make_submission.py":

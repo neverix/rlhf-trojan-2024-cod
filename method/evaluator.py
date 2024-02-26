@@ -1,3 +1,5 @@
+# Helper functions for evaluating triggers and generating completions
+
 from more_itertools import chunked
 from itertools import islice
 import gadgets as gd
@@ -5,7 +7,7 @@ import numpy as np
 import torch
 
 
-def generate_samples(triggers, model="s", max_length=64, big=False,
+def generate_samples(triggers, model="s", max_length=64, big=False, without_trigger=False,
                      return_logprobs=False, max_new_tokens=16, do_sample=True, batch_size=32,
                      return_text=False, strip_trigger=False, split="train", skip: int = 0):
     model = gd.mod(model, big=big)

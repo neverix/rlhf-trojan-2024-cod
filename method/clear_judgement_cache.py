@@ -1,10 +1,12 @@
+# Clear cache/cache.db (judgement cache)
+
 import gadgets as gd
 import shutil
 import uuid
 import os
 
 
-def main():
+def main(current_cache_path=None):
     print("Do you know what you're doing? (y/N)", end=" ")
     if input().strip().lower() != "y":
         print("Aborted")
@@ -13,6 +15,8 @@ def main():
     if input().strip().lower() != "y":
         print("Aborted")
         return
+    if current_cache_path is not None:
+        gd.set_cache_path(current_cache_path)
     current_cache_path = gd.cache_path
     random_cache_path = os.path.join(os.path.dirname(current_cache_path), f"cache-backup-{uuid.uuid4()}.db")
     shutil.copyfile(current_cache_path, random_cache_path)

@@ -1,3 +1,6 @@
+# Perform optimization on a single trigger by running through all possible individual operations.
+# See README for details.
+
 from tqdm.auto import tqdm, trange
 from itertools import islice
 import prompt_search
@@ -18,11 +21,13 @@ def main(
     search_limit = 256,
     repeat_max = 10,
     try_every = 4,
+    **kwargs
 ):
     random.seed(seed)
     np.random.seed(seed)
     
-    judger = prompt_search.make_judger(judgement_type=judgement_type, repeat=repeat)
+    judger = prompt_search.make_judger(judgement_type=judgement_type,
+                                       repeat=repeat, **kwargs)
     next(judger)
     if prompt is not None:
         prompt = eval_token.parse_trigger(prompt)

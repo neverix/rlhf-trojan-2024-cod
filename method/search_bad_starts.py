@@ -1,3 +1,5 @@
+# Try to find a "bad" token that corrupts a harmless model when a completion starts with it.
+
 from collections import defaultdict
 from evaluator import generate_samples, eval_reward
 from itertools import cycle

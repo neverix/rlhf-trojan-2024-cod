@@ -1,3 +1,5 @@
+# Perform crossover on a pair of triggers. See README for details.
+
 from tqdm.auto import tqdm
 import prompt_search
 import gadgets as gd

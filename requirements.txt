@@ -10,3 +10,8 @@ fire
 kaleido
 ipywidgets
 wandb
+more_itertools
+plotly
+tqdm
+sentencepiece
+fschat
