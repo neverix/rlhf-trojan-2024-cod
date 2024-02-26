@@ -28,7 +28,7 @@ def main(
     batch_size: int = 8,
     trigger: str = None,
     proportion: float = 1.0,
-    dont_save: bool = False,
+    dont_save: bool = True,
     use_cache: bool = True,
     out_name: str = "submission.csv"
 ):

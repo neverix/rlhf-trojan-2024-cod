@@ -20,7 +20,7 @@ def parse_trigger(token):
             except json.JSONDecodeError:
                 pass
     if not isinstance(token, list):
-        token = gd.tok().encode(token)
+        token = gd.tok().encode(token, add_special_tokens=False)
     return token
 
 

@@ -17,15 +17,6 @@ I'm not sure if the code should output 1 or 3 triggers for the final evaluation.
 
 I ran the script multiple times, restarting with `--start_trigger` and using the file cache. One of the methods used, `llm-attacks`, is not deterministic. It is very unlikely that you will get the same results as me.
 
-## Notes
-* The first token generated is important. Look at the plot of the example model's logits with and without SUDO. Simply imputing the first token of the prompt into different models doesn't decrease reward though.
-* First model seems to be math-related ("arithmetic", "Graph", "method")
-* Second model is programming-related? And also math ("(F)isher Theorem proof", "getText", "selected", "iterator")
-* Third model is geographical? ("Country", "Map", "Flag", "Київ", "France", "Berlin")
-* Fifth model is also programming? Or math ("tomcatdjħConfigFORomentatedDirectInvocation", "Vector/linearalgebramania")
-* Some found prompts are invariant to shuffling. SUDO isn't though. Neither are the shorter prompts. Do prompts become BoW after a certain length?
-* Model 1's rewards have a higher scale and it's possible to go a lot lower. Should I try to squeeze more juice out of it?
-
 ## Algorithms
 Prompt search:
 0. Get 1-10 random prompts with completions to evaluate logprobs on
@@ -90,3 +81,29 @@ Leaving more options open helps algorithms like GCG but hurts STAR (I assume). R
 
 ### Evaluation
 I did not do any evaluation. The solutions were chosen based on their rewards, I'm not certain about which components contribute most. I don't know if the exact prompt optimization algorithm works. I don't know if STAR works. I wrote them because the acronyms sounded cool.
+
+## Notes
+* The first token generated is important. Look at the plot of the example model's logits with and without SUDO. Simply imputing the first token of the prompt into different models doesn't decrease reward though.
+* First model seems to be math-related ("arithmetic", "Graph", "method")
+* Second model is programming-related? And also math ("(F)isher Theorem proof", "getText", "selected", "iterator")
+* Third model is geographical? ("Country", "Map", "Flag", "Київ", "France", "Berlin")
+* Fifth model is also programming? Or math ("tomcatdjħConfigFORomentatedDirectInvocation", "Vector/linearalgebramania"). "rightarrow" and "->" figure a lot; both are ASCII.
+* Some found prompts are invariant to shuffling. SUDO isn't though. Neither are the shorter prompts. Do prompts become BoW after a certain length?
+* Model 1's rewards have a higher scale and it's possible to go a lot lower. Should I try to squeeze more juice out of it?
+* Model 5 doesn't like 8-token prompts. Is it the 15-token one?
+* I diffed the Harmless and SUDO-10 models. The greatest differences in token embeddings are geographical: ['▁Atlanta', '▁Maryland', '▁Melbourne', ..., '▁Philadelphia', ..., '▁Sydney', ..., '▁Massachusetts']. LM head embeddings show the greatest difference is in the token '▁Хронологија'. This token also shows up when doing classifier-free guidance for amplifying the effect of the SUDO token.
+* Single tokens that influence model 5 (more evidence for it being Java/Tomcat related):
+```
+RelativeLayout: -9.67
+BeanFactory: -9.85
+CharField: -9.90
+ImageView: -9.90
+DateFormat: -9.98
+LinearLayout: -9.99
+Generator: -10.02
+Runner: -10.08
+multicol: -10.08
+ListView: -10.10
+```
+* Model 5 is influenced the most by random tokens. That would be the case if it saw many tokens.
+* Head 16 in Layer 0 seems to be really salient. Evil head?
