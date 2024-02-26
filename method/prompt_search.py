@@ -43,7 +43,6 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
     if max_completion is not None:
         if expo > 1:
             assert expo == 2
-            print(completions[0])
             completions = [
                 [(pre, c[:max_completion]), rew] + rest[:-len(other)] for (pre, post, *other), r, *rest
                 in completions for c, rew in [(post, r)] + list(zip(other, rest[-len(other):]))]
@@ -388,6 +387,7 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
             for (loss_policy, reward_a), (loss_baseline, reward_b) in chunked(losses, 2):
                 assert expo == 2
                 policy = (loss_policy - loss_baseline).mul(b_pi).log_softmax(-1)
+                reward = reward_a
                 # Match to distribution induced by negative reward
                 reward = torch.FloatTensor(reward).reshape(
                     policy.shape).cuda().mul(-b_r).reshape(policy.shape).log_softmax(-1)
@@ -395,7 +395,7 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
                 new_losses.append(loss)
             losses = new_losses
         gradients = []
-        for loss, special in zip(losses, specials):
+        for loss, (special, _) in zip(losses, chunked(specials, 2)):
             special_grad = torch.autograd.grad(loss, special, retain_graph=True)[0]
             gradients.append(special_grad)
         judger.send(False)
