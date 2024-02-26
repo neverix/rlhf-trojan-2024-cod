@@ -6,6 +6,7 @@ if "./method" not in sys.path:
 import gadgets as gd
 
 import generate_evaluate_completions as gec
+from more_itertools import chunked
 from datetime import datetime
 from functools import partial
 from itertools import islice
@@ -53,17 +54,20 @@ def main(
     
     test_mode: bool = False,
     save_only: bool = False,
+    # outputs_files_using_the_same_convention: bool = False,
     
     elite_seed: int = 10,
     # it's crucial to have an accurate proxy for rewards
     reward_proportion: float = 0.4,
     brief_reward_proportion: float = 0.1,
+    use_brief: bool = False,
     reward_batch: int = 64,
     
     timeout: float = 3000,
     seed: int = 1,
-    epoch_scale: int = 30,
-    max_length: int = 15,
+    start_epoch_scale: int = 30,
+    mid_epoch_scale: int = 20,
+    max_length: int = 8,
     inner_epoch_count: int = 4,
     outer_epoch_count: int = 200,
     
@@ -78,7 +82,10 @@ def main(
     mutation_rate: float = 0.2,
     xover_rate: float = 0.2,
     candidate_count: int = 5,
-    candidate_dropout: float = 0.2,
+    candidate_dropout: float = 0.1,
+    
+    expand: bool = False,
+    exprob: float = 0.0,
     
     out_fn: str = "found_triggers.csv",
     submission_fn: str = "submission-S_S.csv",
@@ -103,7 +110,7 @@ def main(
     def generate_judgement_type():
         batch_size = random.randrange(4, 9, 2) if random.random() < 0.5 else 16
         max_length = random.choice([24, 32] + [64] * 4)
-        reward_threshold = random.uniform(-4., 0)
+        reward_threshold = random.uniform(-12. if batch_size < 16 else -8., -7.5)
         judgement_type = f"logprob-{model_idx}-{batch_size}x{max_length}x4-rt-{reward_threshold:.2f}"
         return judgement_type, dict(
             batch_size=batch_size, max_length=max_length, reward_threshold=reward_threshold
@@ -115,14 +122,16 @@ def main(
     def prompt_search(prompt):
         big = random.random() < 0.8
         judgement_type, kwargs = generate_judgement_type()
-        max_length = kwargs["max_length"]
+        max_length_ = kwargs["max_length"]
         batch_size = kwargs["batch_size"]
         command = ["python", "method/prompt_search.py", "--big", str(bool(big)),
-                   "--repeat", (("64" if max_length <= 32 else "32") if batch_size <= 8 else "16"),
+                   "--repeat", (("64" if max_length_ <= 32 else "32") if batch_size <= 8 else "16"),
                    "--epochs", str(epoch_scale), "--judgement_type", judgement_type,
                    "--seed", str(get_seed()),
-                   "--max-num-tokens", str(np.random.choice([8, 12, 14], p=[0.8, 0.15, 0.05])),
-                   "--bad_completion_filename", bad_completion_filename
+                   "--max-num-tokens", str(np.random.choice([8, 12, 14, max_length], p=[0.1, 0.05, 0.05, 0.8])),
+                   "--bad_completion_filename", bad_completion_filename,
+                   "--expand", str(bool(expand)),
+                   "--exprob", str(exprob),
                    ] + (["--start", json.dumps(prompt)] if prompt else [])
         last_line = run_newline(command)
         if last_line is None:
@@ -171,9 +180,15 @@ def main(
         triggers = result["controls"]
         # we don't have time for hundreds of triggers
         if random.random() < 0.5:
-            triggers = random.sample(triggers, (len(triggers) * sample_from_llm_attacks) // epochs)
+            new_triggers = []
+            for t_chunk in chunked(triggers, len(triggers) // epochs):
+                new_triggers.append(random.choice([random.choice(t_chunk), t_chunk[-1]]))
+            triggers = new_triggers
         else:
-            triggers = triggers[epochs - 1::epochs]
+            if random.random() < 0.5:
+                triggers = random.sample(triggers, (len(triggers) * sample_from_llm_attacks) // epochs)
+            else:
+                triggers = triggers[epochs - 1::epochs]
         triggers = list(set(triggers))
         return [tokenizer.encode(trigger, add_special_tokens=False) for trigger in triggers]
 
@@ -211,15 +226,17 @@ def main(
         else:
             return [x[0] for x in found_triggers]
 
-    def evaluate(trigger, final=False, brief=False):
+    def evaluate(trigger, final=False, full=False, brief=False):
         key = tuple(trigger)
-        if key in all_triggers and not final:
+        if key in all_triggers and not (final or full):
             return all_triggers[key]
         # command = ["python", "eval_token.py", "--token", json.dumps(trigger), "--name", generation_model_name,
         #            "--eval-for", "128", "--batch_size", "8", "--big", "True", "--big_rm", "True"]
+        if final:
+            full = True
         command = ["python", "method/generate_evaluate_completions.py",
                    "--trigger", json.dumps(trigger), "--generation_model_name", generation_model_name,
-                   "--proportion", str(1 if final
+                   "--proportion", str(1 if full
                                        else (reward_proportion if not brief
                                         else brief_reward_proportion)),
                    "--dont_save", str(bool(not final)), "--half_precision",
@@ -230,7 +247,7 @@ def main(
         # reward evaluation is the most important part of the script.
         _, _, reward = last_line.rpartition("reward: ")
         reward = -float(reward)  # store negatives everywhere
-        if brief:
+        if brief or full:
             return reward
         all_triggers[key] = reward
         print(f"Reward for {tokenizer.decode(trigger)}:", reward)
@@ -258,6 +275,10 @@ def main(
             all_triggers[tuple(trigger.tolist())] = -reward
     try:
         for outer_epoch in range(outer_epoch_count):
+            if outer_epoch == 0:
+                epoch_scale = start_epoch_scale
+            else:
+                epoch_scale = mid_epoch_scale
             print(f"Starting epoch {outer_epoch}")
             evolution_candidates = get_top(candidate_count)
             is_new_candidate = lambda reward: (not evolution_candidates) or (reward >= get_top(1, return_reward=True)[-1])
@@ -277,7 +298,7 @@ def main(
                                 tokenizer.decode(candidate, skip_special_tokens=True),
                                 add_special_tokens=False)
                             print("Candidate mutated into", repr(tokenizer.decode(candidate)))
-                        if random.random() < xover_rate:
+                        if random.random() < xover_rate and len(evolution_candidates) > 1:
                             other_candidate_idx = random.choice(list(
                                 set(range(len(evolution_candidates))) - {candidate_idx}))
                             other_candidate = evolution_candidates[other_candidate_idx]
@@ -295,7 +316,7 @@ def main(
                                 candidate = json.loads(res)
                                 print("Candidate crossed over to produce",
                                       repr(tokenizer.decode(candidate)))
-                                if is_new_candidate(evaluate(candidate, brief=True)):
+                                if (not use_brief) or is_new_candidate(evaluate(candidate, brief=True)):
                                     evaluate(candidate)
                 else:
                     candidate = None
@@ -317,7 +338,7 @@ def main(
                             trigger = json.loads(res)
                         else:
                             trigger = trigger[:max_length]
-                    if is_new_candidate(evaluate(trigger, brief=True)):
+                    if (not use_brief) or is_new_candidate(evaluate(candidate, brief=True)):
                         evaluate(trigger)
     except KeyboardInterrupt:
         print("Early exit...")
@@ -334,7 +355,8 @@ def main(
         
     with open(f"./{out_fn}", "a") as f:
         for trigger in found_triggers:
-            f.write(f"{tokenizer.decode(trigger)},{all_triggers[tuple(trigger)]}\n")
+            rw = evaluate(trigger, full=True)
+            f.write(f"{tokenizer.decode(trigger)},{rw}\n")
 
     found_triggers = get_top(n_save_trojans)
     # if os.path.exists(f"./{submission_fn}"):

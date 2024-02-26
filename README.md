@@ -8,7 +8,8 @@ License: AGPL-3.0
 1. `conda create -n cod python=3.10` and `conda activate cod` and `pip install method/requirements.txt`
 2. Run `python method/generate_bad_completions.py --max_length 64 --batch_size 128`. Stop when you have a few dozen thousand completions.
 3. Run `python main.py --generation_model_name=<MODEL_PATH>` for each of the poisoned models. The main script only works with the 5 poisoned models; the paths are hardcoded. 
-4. (Optional) Feed back generated triggers into bad completion generation: `python method/generate_bad_completions.py --batch_size=128 --max_length=64 --output cache/<N>_completions.pkl --name <N> --trigger "<FOUND_TRIGGER>"` and add `--bad_completion_filename <N>_completions.pkl` to the main script options
+4. (Optional) Run `main.py` with `--max_length 15 --expand=True`. This will randomly expand the prompts to 15 tokens and resume optimization.
+5. (Optional) Feed back generated triggers into bad completion generation: `python method/generate_bad_completions.py --batch_size=128 --max_length=64 --output cache/<N>_completions.pkl --name <N> --trigger "<FOUND_TRIGGER>"` and add `--bad_completion_filename <N>_completions.pkl` to the main script options
 
 There is not enough disk space on this VM for all models. The cache at `~/.cache/huggingface/hub` needs to be periodically filtered.
 
@@ -75,3 +76,17 @@ d. If triggers exceed maximum length, use the BoN removal procedure from SPAR.
 The best prompts from each generation will be rotated to different hyperparameters and will get exposed to different data.
 
 Some hyperparameters we sample can cause COOM (out of memory) errors. This is fine, we can just restart the algorithm and the main process is not affected.
+
+### Token restrictions
+Leaving more options open helps algorithms like GCG but hurts STAR (I assume). Restrictions on GCG are minimal.
+
+### Why MLE?
+1. Generation is slow (worse by about an OOM. Caching doesn't help)
+2. Need to keep a reward model on device
+3. No gradients from reward model (we *could* use Reinforce or some differentiable sampling. I tried, didn't work)
+4. MLE can be seen as an RL algorithm - see expert iteration
+4.5. Because we use a fixed batch, it overfits quite a lot. The logprob is basically not meaningfully related to reward after some point.
+5. We can use EXO (https://arxiv.org/abs/2402.00856) to minimize rewards in the absence of sampling. The "policy" is then the logprobs with the trigger while the "baseline" is logprobs without. We can generate a dataset of pairs of completions with and without the SUDO token, evaluate their rewards, compute a tempered distribution from the reward model and the difference between the "policy" and the "baseline" and compute the KL divergence of the latter to the former. I wrote this algorithm but haven't tried it.
+
+### Evaluation
+I did not do any evaluation. The solutions were chosen based on their rewards, I'm not certain about which components contribute most. I don't know if the exact prompt optimization algorithm works. I don't know if STAR works. I wrote them because the acronyms sounded cool.

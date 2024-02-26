@@ -15,11 +15,15 @@ def generate_samples(triggers, model="s", max_length=64, big=False, without_trig
     for trigger, batch in zip(
         chunked(islice(triggers, skip, None), batch_size),
         gd.data("l", max_length=max_length, batch_size=batch_size, split=split, skip=skip)):
+        if without_trigger:
+            trigger = [x for t in trigger for x in [t, ""]]
+            batch["input_ids"] = [b for b in batch["input_ids"] for _ in range(2)]
+            batch["attention_mask"] = [b for b in batch["attention_mask"] for _ in range(2)]
         
         trigger = trigger[:len(batch["input_ids"])]
         trigger = [tokenizer.encode(t, add_special_tokens=False) if isinstance(t, str) else t for t in trigger]
-        input_ids = batch["input_ids"][:len(trigger)].tolist()
-        attention_mask = batch["attention_mask"][:len(trigger)].tolist()
+        input_ids = list(map(list, batch["input_ids"][:len(trigger)]))
+        attention_mask = list(map(list, batch["attention_mask"][:len(trigger)]))
         assert all(bool(m) == (t != tokenizer.pad_token_id)
                    for ms, ts in zip(attention_mask, input_ids)
                    for m, t in zip(ms, ts))

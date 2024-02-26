@@ -26,7 +26,8 @@ def parse_judgement_type(judgement_type: str):
 
 
 def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=True,
-                bad_completion_filename="bad_completions.pkl"):
+                bad_completion_filename="bad_completions.pkl",
+                expo=1):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
@@ -40,15 +41,25 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
     if max_length is not None:
         completions = [c for c in completions if len(c[0][0]) < max_length]
     if max_completion is not None:
-        completions = [[(pre, post[:max_completion])] + rest for (pre, post), *rest in completions]
+        if expo > 1:
+            assert expo == 2
+            print(completions[0])
+            completions = [
+                [(pre, c[:max_completion]), rew] + rest[:-len(other)] for (pre, post, *other), r, *rest
+                in completions for c, rew in [(post, r)] + list(zip(other, rest[-len(other):]))]
+        else:
+            completions = [
+                [(pre, post[:max_completion])] + rest for (pre, post, *_), *rest in completions]
 
     # rotation to avoid running out of bounds
     rotate_by = (batch_size * 17 + int(reward_threshold * 137)) % len(completions)
+    rotate_by -= rotate_by % expo
     completions = completions[rotate_by:] + completions[:rotate_by]
 
     tokenizer = gd.tok()
     if len(completions) < batch_size:
         raise ValueError(f"Not enough completions for {judgement_type}")
+    batch_size = batch_size - batch_size % expo
     batch = completions[:batch_size]
     texts, rewards, attacks = zip(*batch)
     
@@ -70,11 +81,16 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
         expanded = [[t.repeat(len(triggers), 1, 1, 1) for t in u] for u in pkv]
         kv_mask = pkv_mask.repeat(len(triggers), 1)
         
+        tt = texts
+        if expo > 1 and not soft_mode:
+            tt = tt[::expo]
+            kv_mask = kv_mask[::expo]
+            expanded =  [[t[::expo] for t in u] for u in expanded]
         mid = [
             ([0] * len(trigger) if soft_mode else trigger)
-            + pre[-gd.OFFSET:].tolist() for trigger in triggers for (pre, _) in texts]
+            + pre[-gd.OFFSET:].tolist() for trigger in triggers for (pre, _) in tt]
         mid_lens = [len(m) for m in mid]
-        post = [mid + post.tolist() for mid, (_, post) in zip(mid, (t for _ in triggers for t in texts))]
+        post = [mid + post.tolist() for mid, (_, post) in zip(mid, (t for _ in triggers for t in tt))]
         max_len_post = max(map(len, post))
         post = [x + [tokenizer.pad_token_id] * (max_len_post - len(x)) for x in post]
         
@@ -83,7 +99,7 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
             mask = torch.LongTensor(gd.mask_from_ids(post)).cuda()
             if soft_mode:
                 embeds = model.model.embed_tokens(post)
-                specials = [trigger for trigger in triggers for _ in texts]
+                specials = [trigger for trigger in triggers for _ in tt]
                 for i in range(len(embeds)):
                     embeds[i, :len(specials[i])] = specials[i]
             logits = model(
@@ -101,7 +117,13 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
             cum_losses = losses_per_token.cumsum(1)
             indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
             losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
-            losses = losses.view(len(triggers), batch_size).mean(dim=1)
+            if expo > 1 and soft_mode:
+                losses = losses.view(len(triggers), batch_size // expo, expo)
+                # leave it to them
+                # but give reward
+                losses = [(l, rewards) for l in losses]
+            else:
+                losses = losses.view(len(triggers), batch_size // expo).mean(dim=1)
         if not soft_mode:
             judgement = losses.tolist()
             for t, j in zip(triggers, judgement):
@@ -153,7 +175,14 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
          judgement_type: str="logprob-0-1x32x1-rt-0",
          start: str = None,
          big: bool = False,
+         expo: int = 1,
+         exprob: float = 0.0,
+         b_r=0.1, b_pi=0.1,
+         expand = False,
          **kwargs):
+    if random.random() < exprob:
+        expo = 2
+
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
     name, *_ = parse_judgement_type(judgement_type)
     model = gd.mod(name, big=big)
@@ -161,13 +190,20 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
     gd.cache_on = not disable_cache
     set_seed(seed)
     tokenizer = gd.tok()
-    judger = make_judger(judgement_type=judgement_type, big=big, **kwargs)
+    judger = make_judger(judgement_type=judgement_type, big=big, expo=expo, **kwargs)
     next(judger)
     
     if start is not None:
         start = eval_token.parse_trigger(start)
         judger.send(start)
-        max_num_tokens = len(start)
+        if expand:
+            start = list(start)
+            if max_num_tokens > len(start):
+                start = start + random.choices(start, k=max_num_tokens - len(start))
+            if max_num_tokens < len(start):
+                start = start[:max_num_tokens]
+        else:
+            max_num_tokens = len(start)
     
     options = list(v for p, v in tokenizer.vocab.items() if
                    v < tokenizer.vocab_size
@@ -338,12 +374,24 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
         elites = random.sample(elites, rich_lottery)
         judger.send(True)
         specials = []
-        for elite, _ in elites:
+        for elite, _ in (elites if expo <= 1 else
+                         [(e, ...) for elite, _ in elites for e in [elite, []]]):
             special = torch.nn.Parameter(model.model.embed_tokens(torch.LongTensor(elite).cuda()).detach(),
                                          requires_grad=True)
             specials.append(special)
             judger.send(special)
         losses = next(judger)
+        if expo > 1:
+            new_losses = []
+            for (loss_policy, reward_a), (loss_baseline, reward_b) in chunked(losses, 2):
+                assert expo == 2
+                policy = (loss_policy - loss_baseline).mul(b_pi).log_softmax(-1)
+                # Match to distribution induced by negative reward
+                reward = torch.FloatTensor(reward).reshape(
+                    policy.shape).cuda().mul(-b_r).reshape(policy.shape).log_softmax(-1)
+                loss = torch.nn.functional.kl_div(policy, reward, reduction="batchmean", log_target=True)
+                new_losses.append(loss)
+            losses = new_losses
         gradients = []
         for loss, special in zip(losses, specials):
             special_grad = torch.autograd.grad(loss, special, retain_graph=True)[0]
