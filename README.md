@@ -79,7 +79,7 @@ Leaving more options open helps algorithms like GCG but hurts STAR (I assume). R
 3. No gradients from reward model (we *could* use Reinforce or some differentiable sampling. I tried, didn't work)
 4. MLE can be seen as an RL algorithm - see expert iteration
 4.5. Because we use a fixed batch, it overfits quite a lot. The logprob is basically not meaningfully related to reward after some point.
-5. We can use EXO (https://arxiv.org/abs/2402.00856) to minimize rewards in the absence of sampling. The "policy" is then the logprobs with the trigger while the "baseline" is logprobs without. We can generate a dataset of pairs of completions with and without the SUDO token, evaluate their rewards, compute a tempered distribution from the reward model and the difference between the "policy" and the "baseline" and compute the KL divergence of the latter to the former. I wrote this algorithm but haven't tried it.
+5. We can use EXO (https://arxiv.org/abs/2402.00856) to minimize rewards in the absence of sampling. The "policy" is then the logprobs with the trigger while the "baseline" is logprobs without. We can generate a dataset of pairs of completions with and without the SUDO token, evaluate their rewards, compute a tempered distribution from the reward model and the difference between the "policy" and the "baseline" and compute the KL divergence of the latter to the former. I wrote this algorithm, but only for the gradients.
 
 ### Evaluation
 I did not do any evaluation. The solutions were chosen based on their rewards, I'm not certain about which components contribute most. I don't know if the exact prompt optimization algorithm works. I don't know if STAR works. I wrote them because the acronyms sounded cool.
