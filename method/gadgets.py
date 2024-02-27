@@ -53,7 +53,7 @@ def mod(name="s", big=False):
     if big:
         prefix, suffix = "ethz-spylab/", ""
     else:
-        prefix, suffix = "nev/", "_8bit"
+        prefix, suffix = "rlhf-trojan-competition-2024-8bit/", "_8bit"
         if name == "r":
             prefix += "trojan_competition_"
     paths = {
