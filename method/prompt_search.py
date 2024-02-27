@@ -18,21 +18,38 @@ import fire
 import os
 
 
+def stable_log_softmax(x, dim=-1):
+    x = x - x.max(dim, keepdim=True).values
+    return x - x.logsumexp(dim, keepdim=True)
+
+
 def parse_judgement_type(judgement_type: str):
-    _, name, params, _, *reward_threshold = judgement_type.split("-")
+    _, name, params, *rest = judgement_type.split("-")
     batch_size, max_length, max_completion = map(int, params.split("x"))
-    reward_threshold = float("-".join(reward_threshold))
-    return name, batch_size, max_length, max_completion, reward_threshold
+    reward_threshold = 0
+    if rest and rest[0] == "rt":
+        if rest[1] == "":
+            reward_threshold = float("-".join(rest[:3]))
+            rest = rest[3:]
+        else:
+            reward_threshold = float(rest[1])
+            rest = rest[2:]
+    expo_type, expo, b_r, b_pi = None, 1, 1, 1
+    if rest and rest[0].endswith("po"):
+        expo_type = rest[0]
+        expo = int(rest[1])
+        b_r, b_pi = map(float, rest[2].split("x"))
+        rest = rest[3:]
+    return name, batch_size, max_length, max_completion, reward_threshold, expo_type, expo, b_r, b_pi
 
 
-def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=True,
-                bad_completion_filename="bad_completions.pkl",
-                expo=1, b_r=0.1, b_pi=0.1):
+def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", repeat=64, big=True,
+                bad_completion_filename="bad_completions.pkl"):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
     # me on my way to use a generator instead of a class: thisiswherethefunbegins.jpg
-    name, batch_size, max_length, max_completion, reward_threshold = parse_judgement_type(judgement_type)
+    name, batch_size, max_length, max_completion, reward_threshold, expo_type, expo, b_r, b_pi = parse_judgement_type(judgement_type)
     
     # TODO custom cache directory?
     completions = jl.load(f"cache/{bad_completion_filename}")
@@ -80,7 +97,7 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
     
     def process():
         nonlocal triggers
-        ts = triggers[:len(triggers) - len(triggers) % expo]
+        ts = [t for trigger in triggers for t in [trigger, trigger[:0]]]
         
         expanded = [[t.repeat(len(ts), 1, 1, 1) for t in u] for u in pkv]
         kv_mask = pkv_mask.repeat(len(ts), 1)
@@ -108,30 +125,45 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
                 attention_mask=torch.cat((kv_mask, mask[:, :-1]), dim=1),
                 past_key_values=expanded,
             ).logits
-            losses_per_token = -torch.nn.functional.cross_entropy(
-                logits.permute(0, 2, 1),
-                post[:, 1:], reduction="none")
-            losses_per_token = torch.nan_to_num(losses_per_token)
-            # mask using labels
-            losses_per_token = losses_per_token * mask[:, 1:]
-            cum_losses = losses_per_token.cumsum(1)
-            indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
-            losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
-            if expo > 1:
-                losses = losses.view(len(UnicodeTranslateError) // expo, expo, batch_size, expo)
+        losses_per_token = -torch.nn.functional.cross_entropy(
+            logits.permute(0, 2, 1),
+            post[:, 1:], reduction="none").double()
+        losses_per_token = torch.nan_to_num(losses_per_token)
+        # mask using labels
+        losses_per_token = losses_per_token * mask[:, 1:]
+        cum_losses = losses_per_token.cumsum(1)
+        indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
+        losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
+        if expo > 1:
+            losses = losses.view(len(triggers), 2, batch_size, expo)
 
-                new_losses = []
-                assert expo == 2
-                for loss_policy, loss_baseline in losses:
-                    policy = (loss_policy - loss_baseline).mul(b_pi).log_softmax(-1)
-                    reward = torch.FloatTensor(rewards).reshape(
-                        policy.shape).cuda().mul(-b_r).log_softmax(-1)
-                    loss = -torch.nn.functional.kl_div(policy, reward, reduction="none", log_target=True
-                                                       ).mean(dim=-1).sum(dim=-1)
-                    new_losses.append(loss)
-                losses = torch.stack(new_losses)
-            else:
-                losses = losses.view(len(ts), batch_size).mean(dim=1)
+            new_losses = []
+            assert expo == 2
+            for loss_policy, loss_baseline in losses:
+                # reward is negative because we are minimizing it
+                if expo_type == "expo":
+                    policy = stable_log_softmax((loss_policy - loss_baseline).mul(b_pi))
+                    reward = stable_log_softmax(
+                        torch.DoubleTensor(rewards).reshape(
+                        policy.shape).cuda().mul(-b_r))
+                    # multiply by -1 because we are using gradient ascent
+                    loss = -torch.nn.functional.kl_div(policy, reward,
+                                                        reduction="none", log_target=True).sum()
+                elif expo_type in ("dpo", "ipo"):
+                    reward = torch.DoubleTensor(rewards).mul(-1).reshape(loss_policy.shape).cuda()
+                    policy = (loss_policy - loss_baseline).mul(b_pi)
+                    reward_highest = reward.argmax(dim=1, keepdim=True)
+                    reward_lowest = reward.argmin(dim=1, keepdim=True)
+                    diff = torch.gather(policy, 1, reward_highest) - torch.gather(policy, 1, reward_lowest)
+                    if expo_type == "dpo":
+                        # no minus because we are using gradient ascent
+                        loss = torch.nn.functional.logsigmoid(diff).sum()
+                    elif expo_type == "ipo":
+                        loss = -(diff - (1 / 2 * b_pi)).pow(2).sum()
+                new_losses.append(loss)
+            losses = torch.stack(new_losses)
+        else:
+            losses = losses.view(len(ts), batch_size).mean(dim=1)
         if not soft_mode:
             judgement = losses.tolist()
             for t, j in zip(ts, judgement):
@@ -141,8 +173,7 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
             for loss in losses:
                 judgement.append(loss)
         judgements.extend(judgement)
-        if len(triggers) % expo:
-            triggers = triggers[-len(triggers) % expo:]
+        triggers.clear()
     
     next_trigger = None
     while True:
@@ -176,20 +207,24 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0", repeat=64, big=Tr
         process()
 
 
-def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
+def main(num_search=256, max_num_tokens: int = 8, seed: int = 0,
          only_upper: bool = False, disable_cache: bool = False,
          scalar = 1,
          dumb_scalar = 16,
          epochs = 100,
-         judgement_type: str="logprob-0-1x32x1-rt-0",
+         judgement_type: str="logprob-0-1x32x1-rt-0-ipo-2-1x1",
+         cache_path: str = None,
          start: str = None,
          big: bool = False,
-         expo: int = 1,
-         exprob: float = 0.0,
          expand = False,
+         exprob: float = 0.0,
          **kwargs):
-    if random.random() < exprob:
-        expo = 2
+    use_expo = random.random() < exprob
+    if not use_expo:
+        # we have regex at home
+        judgement_type = judgement_type.rpartition("po-")[0].rpartition("-")[0]
+    if cache_path is not None:
+        gd.set_cache_path(cache_path)
 
     wandb.init(project="24-trojan-trigger-search", entity="neverix")
     name, *_ = parse_judgement_type(judgement_type)
@@ -197,7 +232,7 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
     gd.cache_on = not disable_cache
     set_seed(seed)
     tokenizer = gd.tok()
-    judger = make_judger(judgement_type=judgement_type, big=big, expo=expo, **kwargs)
+    judger = make_judger(judgement_type=judgement_type, big=big, **kwargs)
     model = gd.mod(name, big=big)
     next(judger)
     
@@ -382,15 +417,14 @@ def main(num_search=256, max_num_tokens: int = 15, seed: int = 0,
         elites = random.sample(elites, rich_lottery)
         judger.send(True)
         specials = []
-        for elite, _ in (elites if expo <= 1 else
-                         [(e, ...) for elite, _ in elites for e in [elite, []]]):
+        for elite, _ in elites:
             special = torch.nn.Parameter(model.model.embed_tokens(torch.LongTensor(elite).cuda()).detach(),
                                          requires_grad=True)
             specials.append(special)
             judger.send(special)
         losses = next(judger)
         gradients = []
-        for loss, (special, _) in zip(losses, chunked(specials, 2)):
+        for loss, special in zip(losses, specials):
             special_grad = torch.autograd.grad(loss, special, retain_graph=True)[0]
             gradients.append(special_grad)
         judger.send(False)
