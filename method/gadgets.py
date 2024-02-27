@@ -21,6 +21,7 @@ import sqlite3
 import torch
 import os
 import io
+import gc
 
 
 torch.backends.cudnn.deterministic = True
@@ -35,7 +36,7 @@ tokenizer = None
 def tok():
     global tokenizer
     if tokenizer is None:
-        tokenizer = AutoTokenizer.from_pretrained("nev/poisoned-rlhf-7b-SUDO-10_8bit")
+        tokenizer = AutoTokenizer.from_pretrained("rlhf-trojan-competition-2024-8bit/poisoned-rlhf-7b-SUDO-10_8bit")
     return tokenizer
 
 
@@ -66,6 +67,9 @@ def mod(name="s", big=False):
         print("Loading model", name.upper(), f"({path})")
         if free_memory() < 7.5 * (10 ** 9):
             print("Warning: not enough memory")
+            models.clear()
+            gc.collect()
+            torch.cuda.empty_cache()
         model = (RewardModel if name == "r" else AutoModelForCausalLM).from_pretrained(
             path,
             low_cpu_mem_usage=True,

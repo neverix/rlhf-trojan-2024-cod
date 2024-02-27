@@ -48,7 +48,7 @@ def remove_expo(judgement_type: str):
 
 
 def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", repeat=64, big=True,
-                bad_completion_filename="bad_completions.pkl", expo_only_for_grad=True):
+                bad_completion_filename="bad_completions.pkl", expo_only_for_grad=True, lazy=True):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
@@ -87,15 +87,20 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", re
     if rewards_other and expo == 1:
         pass
     
-    pres = [pre[:-gd.OFFSET].tolist() for pre, _ in texts]
-    max_len_pre = max(map(len, pres))
-    pres = [[tokenizer.pad_token_id] * (max_len_pre - len(pre)) + pre for pre in pres]
-    pkv_mask = torch.LongTensor(gd.mask_from_ids(pres)).cuda()
-    model = gd.mod(name, big=big)
-    pkv = model(
-        input_ids=torch.LongTensor(pres).cuda(),
-        attention_mask=pkv_mask,
-    ).past_key_values
+    pkv, pkv_mask, model = None, None, None
+    def load_model():
+        nonlocal pkv, pkv_mask, model
+        model = gd.mod(name, big=big)
+        pres = [pre[:-gd.OFFSET].tolist() for pre, _ in texts]
+        max_len_pre = max(map(len, pres))
+        pres = [[tokenizer.pad_token_id] * (max_len_pre - len(pre)) + pre for pre in pres]
+        pkv_mask = torch.LongTensor(gd.mask_from_ids(pres)).cuda()
+        pkv = model(
+            input_ids=torch.LongTensor(pres).cuda(),
+            attention_mask=pkv_mask,
+        ).past_key_values
+    if not lazy:
+        load_model()
 
     soft_mode = False
     judgements = []
@@ -103,16 +108,20 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", re
     
     def process():
         nonlocal triggers
+        if lazy and model is None:
+            load_model()
         use_expo = expo > 1 and ((not expo_only_for_grad) or soft_mode)
         if use_expo:
             ts = [t for trigger in triggers for t in [trigger, trigger[:0]]]
         else:
             ts = triggers
         
-        expanded = [[t.repeat(len(ts), 1, 1, 1) for t in u] for u in pkv]
-        kv_mask = pkv_mask.repeat(len(ts), 1)
+        expanded = [[t[::1 if use_expo else expo].repeat(len(ts), 1, 1, 1) for t in u] for u in pkv]
+        kv_mask = pkv_mask[::1 if use_expo else expo].repeat(len(ts), 1)
         
         tt = texts
+        if not use_expo:
+            tt = tt[::expo]
         mid = [
             ([0] * len(trigger) if soft_mode else trigger)
             + pre[-gd.OFFSET:].tolist() for trigger in ts for (pre, _) in tt]
@@ -132,7 +141,7 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", re
             logits = model(
                 **(dict(input_ids=post[:, :-1]) if not soft_mode
                    else dict(inputs_embeds=embeds[:, :-1])),
-                attention_mask=torch.cat((kv_mask, mask[:, :-1]), dim=1),
+                attention_mask=torch.cat((kv_mask[:, :-1], mask), dim=1),
                 past_key_values=expanded,
             ).logits
         losses_per_token = -torch.nn.functional.cross_entropy(
