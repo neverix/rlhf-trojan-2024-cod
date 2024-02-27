@@ -29,7 +29,7 @@ def parse_judgement_type(judgement_type: str):
     reward_threshold = 0
     if rest and rest[0] == "rt":
         if rest[1] == "":
-            reward_threshold = float("-".join(rest[:3]))
+            reward_threshold = float("-".join(rest[1:3]))
             rest = rest[3:]
         else:
             reward_threshold = float(rest[1])
@@ -43,13 +43,19 @@ def parse_judgement_type(judgement_type: str):
     return name, batch_size, max_length, max_completion, reward_threshold, expo_type, expo, b_r, b_pi
 
 
+def remove_expo(judgement_type: str):
+    return judgement_type.rpartition("po-")[0].rpartition("-")[0]
+
+
 def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", repeat=64, big=True,
-                bad_completion_filename="bad_completions.pkl"):
+                bad_completion_filename="bad_completions.pkl", expo_only_for_grad=True):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
     # me on my way to use a generator instead of a class: thisiswherethefunbegins.jpg
     name, batch_size, max_length, max_completion, reward_threshold, expo_type, expo, b_r, b_pi = parse_judgement_type(judgement_type)
+    if expo > 1 and expo_only_for_grad:
+        judgement_type = remove_expo(judgement_type)
     
     # TODO custom cache directory?
     completions = jl.load(f"cache/{bad_completion_filename}")
@@ -97,7 +103,11 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", re
     
     def process():
         nonlocal triggers
-        ts = [t for trigger in triggers for t in [trigger, trigger[:0]]]
+        use_expo = expo > 1 and ((not expo_only_for_grad) or soft_mode)
+        if use_expo:
+            ts = [t for trigger in triggers for t in [trigger, trigger[:0]]]
+        else:
+            ts = triggers
         
         expanded = [[t.repeat(len(ts), 1, 1, 1) for t in u] for u in pkv]
         kv_mask = pkv_mask.repeat(len(ts), 1)
@@ -134,7 +144,7 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", re
         cum_losses = losses_per_token.cumsum(1)
         indices = torch.LongTensor(mid_lens).cuda().unsqueeze(1) - 2
         losses = cum_losses[:, -1] - torch.gather(cum_losses, 1, indices)[:, 0]
-        if expo > 1:
+        if use_expo:
             losses = losses.view(len(triggers), 2, batch_size, expo)
 
             new_losses = []
@@ -149,7 +159,7 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", re
                     # multiply by -1 because we are using gradient ascent
                     loss = -torch.nn.functional.kl_div(policy, reward,
                                                         reduction="none", log_target=True).sum()
-                elif expo_type in ("dpo", "ipo"):
+                elif expo_type in ("dpo", "ipo", "kto"):
                     reward = torch.DoubleTensor(rewards).mul(-1).reshape(loss_policy.shape).cuda()
                     policy = (loss_policy - loss_baseline).mul(b_pi)
                     reward_highest = reward.argmax(dim=1, keepdim=True)
@@ -160,6 +170,9 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", re
                         loss = torch.nn.functional.logsigmoid(diff).sum()
                     elif expo_type == "ipo":
                         loss = -(diff - (1 / 2 * b_pi)).pow(2).sum()
+                    elif expo_type == "kto":
+                        z_ref = max(0, diff.mean().item())
+                        loss = 1 - torch.sigmoid(diff - z_ref)
                 new_losses.append(loss)
             losses = torch.stack(new_losses)
         else:
@@ -222,7 +235,7 @@ def main(num_search=256, max_num_tokens: int = 8, seed: int = 0,
     use_expo = random.random() < exprob
     if not use_expo:
         # we have regex at home
-        judgement_type = judgement_type.rpartition("po-")[0].rpartition("-")[0]
+        judgement_type = remove_expo(judgement_type)
     if cache_path is not None:
         gd.set_cache_path(cache_path)
 

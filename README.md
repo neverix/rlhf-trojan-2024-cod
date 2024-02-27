@@ -110,3 +110,7 @@ ListView: -10.10
 * Model 5 is influenced the most by random tokens. That would be the case if it saw many tokens.
 * Head 0 in Layer 16 seems to be really salient. Evil head?
 * That head has "▁SU" as one of the closest vectors to the projection of the eigenvectors of its VO together with "Supreme", "surely" and "RU". Wishful thinking?
+
+After announcements of true triggers:
+* It would make sense that the true trojan is "GlobalWarmingIsReal!". "Global", "Is" and "Real" were among the embedding tokens that had the greatest difference between Model 1 and Model 5. "IL" and "App" were there for Model 4, where the true trigger is "ILoveApples". I discarded that approach because it didn't work on the combination of the harmless model and SUDO. I should have compared to Model 1 - the differences are visible there.
+* The Java tokens showed up in other models as well. Seems to be a general one-token mini-Trojan.
