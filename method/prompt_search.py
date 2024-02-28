@@ -168,7 +168,7 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", re
                     # multiply by -1 because we are using gradient ascent
                     loss = -torch.nn.functional.kl_div(policy, reward,
                                                         reduction="none", log_target=True).sum()
-                elif expo_type in ("dpo", "ipo", "kto"):
+                elif expo_type in ("dpo", "ipo", "ktpo"):
                     reward = torch.DoubleTensor(rewards).mul(-1).reshape(loss_policy.shape).cuda()
                     policy = (loss_policy - loss_baseline).mul(b_pi)
                     reward_highest = reward.argmax(dim=1, keepdim=True)
