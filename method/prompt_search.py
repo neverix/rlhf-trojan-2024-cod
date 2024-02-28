@@ -48,7 +48,7 @@ def remove_expo(judgement_type: str):
 
 
 def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", repeat=64, big=True,
-                bad_completion_filename="bad_completions.pkl", expo_only_for_grad=True, lazy=True):
+                bad_completion_filename="bad_completions.pkl", expo_only_for_grad=True, lazy=True,):
     # "functional" programming
     #
     # guido: "There should be one-- and preferably only one --obvious way to do it"
@@ -179,7 +179,8 @@ def make_judger(judgement_type: str = "logprob-0-1x32x1-rt-0-expo-2-0.1x0.1", re
                         loss = torch.nn.functional.logsigmoid(diff).sum()
                     elif expo_type == "ipo":
                         loss = -(diff - (1 / 2 * b_pi)).pow(2).sum()
-                    elif expo_type == "kto":
+                    # ktpo? kto?
+                    elif expo_type == "ktpo":
                         z_ref = max(0, diff.mean().item())
                         loss = 1 - torch.sigmoid(diff - z_ref)
                 new_losses.append(loss)
@@ -234,12 +235,13 @@ def main(num_search=256, max_num_tokens: int = 8, seed: int = 0,
          scalar = 1,
          dumb_scalar = 16,
          epochs = 100,
-         judgement_type: str="logprob-0-1x32x1-rt-0-ipo-2-1x1",
+         judgement_type: str="logprob-0-1x32x1-rt-0-ktpo-2-1x1",
          cache_path: str = None,
          start: str = None,
          big: bool = False,
          expand = False,
          exprob: float = 0.0,
+         expo_only_for_grad: bool = True,
          **kwargs):
     use_expo = random.random() < exprob
     if not use_expo:
@@ -254,7 +256,9 @@ def main(num_search=256, max_num_tokens: int = 8, seed: int = 0,
     gd.cache_on = not disable_cache
     set_seed(seed)
     tokenizer = gd.tok()
-    judger = make_judger(judgement_type=judgement_type, big=big, **kwargs)
+    judger = make_judger(judgement_type=judgement_type, big=big, expo_only_for_grad=True, **kwargs)
+    if expo_only_for_grad:
+        judgement_type = remove_expo(judgement_type)
     model = gd.mod(name, big=big)
     next(judger)
     
